@@ -5,11 +5,13 @@ import {
 } from "@angular/http";
 import {
     Injectable,
+    Inject,
     ReflectiveInjector,
     Provider,
     NgModule,
     Optional,
     SkipSelf,
+    OpaqueToken,
     ModuleWithProviders
 } from "@angular/core";
 import { Observable } from 'rxjs/Observable';
@@ -76,7 +78,7 @@ export function Resource(config: IResourceConfig) {
     };
 }
 
-export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager): T; };
+export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager, data?: any): T; };
 
 export abstract class BaseResource {
 
@@ -253,18 +255,23 @@ export class QueryBuilder {
             .get(uri, { search: this.buildParameters() })
             .map(res => res.json())
             .map((data) => {
-
+                return {
+                    data: this.rm.extractQueryData(data, this.resource),
+                    meta: _.get(data, 'meta')
+                }
             });
     }
 }
 
+export let API_PATH = new OpaqueToken("apiPath");
+
 @Injectable()
 export class ResourceManager {
 
-    apiUrl: string = 'http://localhost:8080/';
-
-    constructor(public http: Http) {
-        console.log('created');
+    constructor(
+        public http: Http,
+        @Inject(API_PATH)
+        public apiUrl: string) {
     }
 
     from<T extends BaseResource>(r: ResourceType<T>): QueryBuilder {
@@ -274,8 +281,22 @@ export class ResourceManager {
     buildUri<T extends BaseResource>(resource: T, id?: string): string {
         const resourceMetadata = Reflect.getMetadata('Resource', resource);
         let apiPath = this.apiUrl;
-        apiPath += apiPath[apiPath.length - 1] === '/' ? resourceMetadata.type : `/${resourceMetadata.type}`;
+        const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
+        apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
         return id ? `${apiPath}\\${id}` : apiPath;
+    }
+
+    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] {
+        let models: T[] = [];
+        body.data.forEach((data: any) => {
+            let model: T = new modelType(this, data);
+            /*if (body.included) {
+                model.syncRelationships(data, body.included, 0);
+                this.addToStore(model);
+            }*/
+            models.push(model);
+        });
+        return models;
     }
 }
 
