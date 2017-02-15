@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "",
   "scripts": {
-    "dev": "tsc --watch",
+    "dev": "tsc -p tsconfig.json --watch",
     "test": "karma start",
     "prepublish": "tsc -p tsconfig.json",
     "ngc": "ngc"
@@ -19,12 +19,12 @@
   "typings": "./angular-jsonapi.d.ts",
   "types": "./angular-jsonapi.d.ts",
   "devDependencies": {
-    "@angular/common": "^2.4.2",
-    "@angular/compiler": "^2.4.2",
-    "@angular/compiler-cli": "^2.4.2",
-    "@angular/core": "^2.4.2",
-    "@angular/http": "^2.4.2",
-    "@angular/platform-browser": "^2.4.2",
+    "@angular/common": "^2.4.0",
+    "@angular/compiler": "^2.4.0",
+    "@angular/compiler-cli": "^2.4.0",
+    "@angular/core": "^2.4.0",
+    "@angular/http": "^2.4.0",
+    "@angular/platform-browser": "^2.4.0",
     "@types/jasmine": "^2.2.33",
     "@types/lodash": "^4.14.52",
     "@types/reflect-metadata": "0.0.5",

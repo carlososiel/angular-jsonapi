@@ -97,7 +97,7 @@ export abstract class BaseResource {
     private initAttributes(data: any) {
         this.id = data.id;
         let annotations = Reflect.getMetadata('Attribute', this);
-        _.forEach(data.attributes, function (value, key) {
+        _.forEach(data.attributes, function (value: any, key: string) {
             if (this.hasOwnProperty(key)) {
                 this[key] = value;
 
@@ -152,7 +152,7 @@ export abstract class BaseResource {
         if (this.id) {
             _.set(data, 'id', this.id);
         }
-        _.each(annotations, function (value, key) {
+        _.each(annotations, function (value: any, key: string) {
             if (_.get(value, 'isDirty')) {
                 _.set(data.attributes, key, this[key]);
             }
