@@ -1,7 +1,7 @@
 import {
     Http,
     Response,
-    HttpModule
+    HttpModule, Headers
 } from "@angular/http";
 import {
     Injectable,
@@ -250,9 +250,14 @@ export class QueryBuilder {
     }
 
     execute(id?: string): Observable<any> {
+        // setting properly header for json-api
+        let headers = new Headers();
+        headers.append('Content-Type', 'application/vnd.api+json');
+        headers.append('Accept', 'application/vnd.api+json');
+
         const uri = this.rm.buildUri(this.resource, id);
         return this.rm.http
-            .get(uri, { search: this.buildParameters() })
+            .get(uri, {search: this.buildParameters(), headers: headers})
             .map(res => res.json())
             .map((data) => {
                 return {
