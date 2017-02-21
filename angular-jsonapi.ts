@@ -1,7 +1,7 @@
 import {
     Http,
     Response,
-    HttpModule
+    HttpModule, Headers
 } from "@angular/http";
 import {
     Injectable,
@@ -96,10 +96,12 @@ export abstract class BaseResource {
 
     private initAttributes(data: any) {
         this.id = data.id;
+        let self: any;
+        self = this;
         let annotations = Reflect.getMetadata('Attribute', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (this.hasOwnProperty(key)) {
-                this[key] = value;
+            if (annotations.hasOwnProperty(key)) {
+                self[key] = value;
 
                 _.extend(annotations[key], {
                     isDirty: false,
@@ -143,7 +145,9 @@ export abstract class BaseResource {
     }
 
     toJsonApi() {
-        const resourceMeta = Reflect.getMetadata('Resource', this);
+        let self: any;
+        self = this;
+        const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
         const annotations = Reflect.getMetadata('Attribute', this);
         let data = {
             type: resourceMeta.type,
@@ -154,7 +158,7 @@ export abstract class BaseResource {
         }
         _.each(annotations, function (value: any, key: string) {
             if (_.get(value, 'isDirty')) {
-                _.set(data.attributes, key, this[key]);
+                _.set(data.attributes, key, self[key]);
             }
         });
         return { data: data };
@@ -250,9 +254,14 @@ export class QueryBuilder {
     }
 
     execute(id?: string): Observable<any> {
-        const uri = this.rm.buildUri(this.resource, id);
+        // setting properly header for json-api
+        let headers = new Headers();
+        headers.append('Content-Type', 'application/vnd.api+json');
+        headers.append('Accept', 'application/vnd.api+json');
+
+        const uri = this.rm.buildUri(new this.resource, id);
         return this.rm.http
-            .get(uri, { search: this.buildParameters() })
+            .get(uri, {search: this.buildParameters(), headers: headers})
             .map(res => res.json())
             .map((data) => {
                 return {
@@ -278,8 +287,8 @@ export class ResourceManager {
         return new QueryBuilder(r, this);
     }
 
-    buildUri<T extends BaseResource>(resource: T, id?: string): string {
-        const resourceMetadata = Reflect.getMetadata('Resource', resource);
+    buildUri(resource: any, id?: string): string {
+        const resourceMetadata = Reflect.getMetadata('Resource', resource.constructor);
         let apiPath = this.apiUrl;
         const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
         apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
