@@ -100,7 +100,7 @@ export abstract class BaseResource {
         self = this;
         let annotations = Reflect.getMetadata('Attribute', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (self.hasOwnProperty(key)) {
+            if (annotations.hasOwnProperty(key)) {
                 self[key] = value;
 
                 _.extend(annotations[key], {
