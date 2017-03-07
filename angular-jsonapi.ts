@@ -97,10 +97,11 @@ export abstract class BaseResource {
 
     private initAttributes(data: any, original: boolean) {
         this.id = data.id;
+        let self: any = this;
         let annotations = Reflect.getMetadata('Attribute', this);
         _.forEach(data.attributes, function (value: any, key: string) {
             if (annotations.hasOwnProperty(key)) {
-                this[key] = value;
+                self[key] = value;
                 
                 if (original) {
                     _.extend(annotations[key], {
@@ -148,6 +149,7 @@ export abstract class BaseResource {
     }
 
     toJsonApi() {
+        let self: any = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
         const annotations = Reflect.getMetadata('Attribute', this);
         let data = {
@@ -159,7 +161,7 @@ export abstract class BaseResource {
         }
         _.each(annotations, function (value: any, key: string) {
             if (_.get(value, 'isDirty')) {
-                _.set(data.attributes, key, this[key]);
+                _.set(data.attributes, key, self[key]);
             }
         });
         return { data: data };
