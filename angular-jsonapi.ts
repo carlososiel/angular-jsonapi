@@ -1,7 +1,8 @@
 import {
     Http,
     Response,
-    HttpModule, Headers
+    HttpModule,
+    Headers
 } from "@angular/http";
 import {
     Injectable,
@@ -78,7 +79,7 @@ export function Resource(config: IResourceConfig) {
     };
 }
 
-export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager, data?: any): T; };
+export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager, data?: any, original?: boolean): T; };
 
 export abstract class BaseResource {
 
@@ -88,25 +89,25 @@ export abstract class BaseResource {
     updateAt: string;
     deleteAt: string;
 
-    constructor(protected rm: ResourceManager, data?: any) {
+    constructor(protected rm: ResourceManager, data?: any, original: boolean = false) {
         if (data) {
-            this.initAttributes(data);
+            this.initAttributes(data, original);
         }
     }
 
-    private initAttributes(data: any) {
+    private initAttributes(data: any, original: boolean) {
         this.id = data.id;
-        let self: any;
-        self = this;
         let annotations = Reflect.getMetadata('Attribute', this);
         _.forEach(data.attributes, function (value: any, key: string) {
             if (annotations.hasOwnProperty(key)) {
-                self[key] = value;
-
-                _.extend(annotations[key], {
-                    isDirty: false,
-                    originalValue: value
-                });
+                this[key] = value;
+                
+                if (original) {
+                    _.extend(annotations[key], {
+                        isDirty: false,
+                        originalValue: value
+                    });
+                }
             }
         });
         return this;
@@ -114,21 +115,23 @@ export abstract class BaseResource {
 
     save(): Observable<Response | any> {
         const uri = this.rm.buildUri(this, this.id);
+        const headers = this.rm.getHeaders();
         if (this.id)
-            return this.rm.http.patch(uri, this.toJsonApi())
+            return this.rm.http.patch(uri, this.toJsonApi(), { headers: headers })
                 .map(res => res.json())
-                .map((data) => { return this.initAttributes(data); });
+                .map((data) => { return this.initAttributes(data, true); });
         else
-            return this.rm.http.post(uri, this.toJsonApi())
+            return this.rm.http.post(uri, this.toJsonApi(), { headers: headers })
                 .map(res => res.json())
-                .map((data) => { return this.initAttributes(data); });
+                .map((data) => { return this.initAttributes(data, true); });
     }
 
     remove(): Observable<Response | any> {
         const uri = this.rm.buildUri(this, this.id);
-        return this.rm.http.delete(uri)
+        const headers = this.rm.getHeaders();
+        return this.rm.http.delete(uri, { headers: headers })
             .map(res => res.json())
-            .map((data) => { return this.initAttributes(data); });
+            .map((data) => { return this.initAttributes(data, true); });
     }
 
     isDirty(): boolean {
@@ -145,8 +148,6 @@ export abstract class BaseResource {
     }
 
     toJsonApi() {
-        let self: any;
-        self = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
         const annotations = Reflect.getMetadata('Attribute', this);
         let data = {
@@ -158,7 +159,7 @@ export abstract class BaseResource {
         }
         _.each(annotations, function (value: any, key: string) {
             if (_.get(value, 'isDirty')) {
-                _.set(data.attributes, key, self[key]);
+                _.set(data.attributes, key, this[key]);
             }
         });
         return { data: data };
@@ -255,13 +256,12 @@ export class QueryBuilder {
 
     execute(id?: string): Observable<any> {
         // setting properly header for json-api
-        let headers = new Headers();
-        headers.append('Content-Type', 'application/vnd.api+json');
-        headers.append('Accept', 'application/vnd.api+json');
+
+        const headers = this.rm.getHeaders();
 
         const uri = this.rm.buildUri(new this.resource, id);
         return this.rm.http
-            .get(uri, {search: this.buildParameters(), headers: headers})
+            .get(uri, { search: this.buildParameters(), headers: headers })
             .map(res => res.json())
             .map((data) => {
                 return {
@@ -272,15 +272,11 @@ export class QueryBuilder {
     }
 }
 
-export let API_PATH = new OpaqueToken("apiPath");
-
 @Injectable()
 export class ResourceManager {
+    apiUrl: string = 'http://localhost:8000/'
 
-    constructor(
-        public http: Http,
-        @Inject(API_PATH)
-        public apiUrl: string) {
+    constructor(public http: Http) {
     }
 
     from<T extends BaseResource>(r: ResourceType<T>): QueryBuilder {
@@ -298,7 +294,7 @@ export class ResourceManager {
     extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] {
         let models: T[] = [];
         body.data.forEach((data: any) => {
-            let model: T = new modelType(this, data);
+            let model: T = new modelType(this, data, true);
             /*if (body.included) {
                 model.syncRelationships(data, body.included, 0);
                 this.addToStore(model);
@@ -306,6 +302,13 @@ export class ResourceManager {
             models.push(model);
         });
         return models;
+    }
+
+    getHeaders() {
+        let headers = new Headers();
+        headers.append('Content-Type', 'application/vnd.api+json');
+        headers.append('Accept', 'application/vnd.api+json');
+        return headers;
     }
 }
 
