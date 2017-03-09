@@ -132,7 +132,8 @@ export abstract class BaseResource {
         const headers = this.rm.getHeaders();
         return this.rm.http.delete(uri, { headers: headers })
             .map(res => res.json())
-            .map((data) => { return this.initAttributes(data, true); });
+            .map((data) => {
+                return this.initAttributes(data.data, true); });
     }
 
     isDirty(): boolean {
