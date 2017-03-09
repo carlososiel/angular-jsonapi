@@ -293,16 +293,21 @@ export class ResourceManager {
         return id ? `${apiPath}\\${id}` : apiPath;
     }
 
-    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] {
+    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T{
         let models: T[] = [];
-        body.data.forEach((data: any) => {
-            let model: T = new modelType(this, data, true);
-            /*if (body.included) {
-                model.syncRelationships(data, body.included, 0);
-                this.addToStore(model);
-            }*/
-            models.push(model);
-        });
+
+        if(_.isArray(body.data)){
+            body.data.forEach((data: any) => {
+                let model: T = new modelType(this, data, true);
+                /*if (body.included) {
+                 model.syncRelationships(data, body.included, 0);
+                 this.addToStore(model);
+                 }*/
+                models.push(model);
+            });
+        }else{
+            return new modelType(this, body.data, true);
+        }
         return models;
     }
 
