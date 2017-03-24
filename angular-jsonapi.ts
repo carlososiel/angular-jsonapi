@@ -17,6 +17,7 @@ import {
 } from "@angular/core";
 import { Observable } from 'rxjs/Observable';
 import 'rxjs/add/operator/map';
+import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
 import 'rxjs/add/observable/throw';
 import * as _ from 'lodash';
@@ -91,11 +92,11 @@ export abstract class BaseResource {
 
     constructor(protected rm: ResourceManager, data?: any, original: boolean = false) {
         if (data) {
-            this.initAttributes(data, original);
+            this.initAttributes({attributes: data}, original);
         }
     }
 
-    private initAttributes(data: any, original: boolean) {
+    initAttributes(data: any, original: boolean) {
         this.id = data.id;
         let self: any = this;
         let annotations = Reflect.getMetadata('Attribute', this);
@@ -277,7 +278,7 @@ export class QueryBuilder {
 
 @Injectable()
 export class ResourceManager {
-    apiUrl: string = 'http://localhost:8000/'
+    apiUrl: string = 'http://localhost:8000/';
 
     constructor(public http: Http) {
     }
@@ -318,6 +319,48 @@ export class ResourceManager {
         headers.append('Accept', 'application/vnd.api+json');
         return headers;
     }
+
+    saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
+        let data: any[] = [];
+        let dataUri: any[] = [];
+        const headers = this.getHeaders();
+
+        _.each(resources, (resource: any) => {
+            dataUri.push(resource.rm.buildUri(resource, resource.id));
+            data.push(resource.toJsonApi().data);
+        });
+
+        // Structure to create several resources
+        const jsonApiStructure = {
+            data: data
+        };
+
+        return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
+            .map(res => res.json())
+            .map((data) => {
+                return this.initAttributesCollection(resources, data, true);
+            });
+    }
+
+    initAttributesCollection<T extends BaseResource>(resources: T[], dataResources: any, original: boolean): T[] {
+        let models: T[] = [];
+        for (let i = 0; i < resources.length; i++)
+            models.push(resources[i].initAttributes(dataResources.data[i], original));
+        return models;
+    }
+}
+
+@Injectable()
+export class ResourceCollection {
+    constructor(public http: Http) {
+    }
+
+    save<T extends BaseResource>(resources: T[]): void {
+        // create structure for json-api
+        _.each(resources, (resource: any, key: string) => {
+        });
+        // return Observable.of([{one:1,two:2}]);
+    }
 }
 
 /**
@@ -326,7 +369,7 @@ export class ResourceManager {
  */
 @NgModule({
     imports: [HttpModule],
-    providers: [ResourceManager]
+    providers: [ResourceManager, ResourceCollection]
 })
 export class JsonApiModule {
     constructor( @Optional() @SkipSelf() parentModule: JsonApiModule) {
@@ -340,7 +383,8 @@ export class JsonApiModule {
         return {
             ngModule: JsonApiModule,
             providers: [
-                { provide: ResourceManager, useValue: config }
+                { provide: ResourceManager, useValue: config },
+                { provide: ResourceCollection, useValue: config }
             ]
         };
     }
