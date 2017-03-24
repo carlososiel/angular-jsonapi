@@ -92,7 +92,11 @@ export abstract class BaseResource {
 
     constructor(protected rm: ResourceManager, data?: any, original: boolean = false) {
         if (data) {
-            this.initAttributes({attributes: data}, original);
+            if (data.attributes)
+                this.initAttributes(data, original);
+            else
+            // when create a new resource from app
+                this.initAttributes({attributes: data}, original);
         }
     }
 
