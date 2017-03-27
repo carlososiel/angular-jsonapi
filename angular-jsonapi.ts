@@ -96,7 +96,7 @@ export abstract class BaseResource {
                 this.initAttributes(data, original);
             else
             // when create a new resource from app
-                this.initAttributes({attributes: data}, original);
+                this.initAttributes({attributes: data, id: data.id}, original);
         }
     }
 
@@ -119,15 +119,15 @@ export abstract class BaseResource {
         return this;
     }
 
-    save(): Observable<Response | any> {
+    save(relationShip: string[] = []): Observable<Response | any> {
         const uri = this.rm.buildUri(this, this.id);
         const headers = this.rm.getHeaders();
         if (this.id)
-            return this.rm.http.patch(uri, this.toJsonApi(), { headers: headers })
+            return this.rm.http.patch(uri, this.toJsonApi(relationShip), { headers: headers })
                 .map(res => res.json())
                 .map((data) => { return this.initAttributes(data, true); });
         else
-            return this.rm.http.post(uri, this.toJsonApi(), { headers: headers })
+            return this.rm.http.post(uri, this.toJsonApi(relationShip), { headers: headers })
                 .map(res => res.json())
                 .map((data) => { return this.initAttributes(data, true); });
     }
@@ -154,13 +154,19 @@ export abstract class BaseResource {
         return dirty;
     }
 
-    toJsonApi() {
+    /**
+     * Return a resource un json-api format
+     * @param relationShip resources that has a relationship with this resource
+     * @returns {{data: {type, attributes: {}}}}
+     */
+    toJsonApi(relationShips: string[] = []) {
         let self: any = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
         const annotations = Reflect.getMetadata('Attribute', this);
         let data = {
             type: resourceMeta.type,
-            attributes: {}
+            attributes: {},
+            relationships: {}
         };
         if (this.id) {
             _.set(data, 'id', this.id);
@@ -170,6 +176,28 @@ export abstract class BaseResource {
                 _.set(data.attributes, key, self[key]);
             }
         });
+
+        if (relationShips.length) {
+
+            const relationshipsMetaData = Reflect.getMetadata('Relationships', this);
+            _.each(relationShips, (value: any) => {
+                let typeResource = value.type;
+                let index = relationshipsMetaData.findIndex((item: any) => item.propertyName == typeResource)
+
+                if (index != -1) {
+                    let relation: any[] = [];
+                    _.each(value.data, (id: any) => {
+                        relation.push({type: typeResource, id: id})
+                    });
+                    _.set(data.relationships, typeResource, {data: relation});
+                }
+            });
+
+            if (!_.keys(data.relationships).length)
+                delete data.relationships;
+        } else {
+            delete data.relationships;
+        }
         return { data: data };
     }
 }
