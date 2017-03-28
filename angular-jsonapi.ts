@@ -290,12 +290,12 @@ export class QueryBuilder {
         return params.join('&');
     }
 
-    execute(id?: string): Observable<any> {
+    execute(id?: string, queryParams?: any): Observable<any> {
         // setting properly header for json-api
 
         const headers = this.rm.getHeaders();
 
-        const uri = this.rm.buildUri(new this.resource, id);
+        const uri = this.rm.buildUri(new this.resource, id, queryParams);
         return this.rm.http
             .get(uri, { search: this.buildParameters(), headers: headers })
             .map(res => res.json())
@@ -319,12 +319,22 @@ export class ResourceManager {
         return new QueryBuilder(r, this);
     }
 
-    buildUri(resource: any, id?: string): string {
+    buildUri(resource: any, id?: string, queryParams?: any): string {
         const resourceMetadata = Reflect.getMetadata('Resource', resource.constructor);
         let apiPath = this.apiUrl;
         const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
         apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
-        return id ? `${apiPath}\\${id}` : apiPath;
+        let params: string = '?';
+        if (_.keys(queryParams).length) {
+            _.each(queryParams, (value: any, key: string) => {
+                params += encodeURIComponent(key) + "=" + encodeURIComponent(value) + "&";
+            });
+            params = params.substring(0, params.length - 1);
+            return id ? `${apiPath}\\${id}${params}` : `apiPath${params}`;
+
+        } else {
+            return id ? `${apiPath}\\${id}` : apiPath;
+        }
     }
 
     extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T{
