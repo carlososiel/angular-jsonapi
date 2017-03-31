@@ -57,14 +57,16 @@ export function Attribute() {
     };
 }
 
-export function Relationship(relationsipConstructor: Function) {
+export function Relationship(relationshipConstructor: Function) {
     return function (target: any, propertyName: string | symbol) {
+
+
         let annotations = Reflect.getMetadata('Relationships', target) || [];
         let targetType = Reflect.getMetadata('design:type', target, propertyName);
         annotations.push({
             propertyName: propertyName,
             relationship: targetType,
-            relationsipConstructor: relationsipConstructor
+            relationshipConstructor: relationshipConstructor
         });
         Reflect.defineMetadata('Relationships', annotations, target);
         if (!_.get(target, propertyName)) {
@@ -125,6 +127,7 @@ export abstract class BaseResource {
             }
         });
 
+        let relationships = Reflect.getMetadata('Relationships', this) || [];
 
         // let relationships = Reflect.getMetadata('Relationships', this) || [];
         // _.forEach(relationships, (item: any) => {
@@ -238,8 +241,16 @@ export abstract class BaseResource {
                 // if current resource have this relationship defined
                 let relationshipObject = annotations.find((item: any) => item['propertyName'] === type);
                 if (relationshipObject) {
-                    debugger;
-                    console.log(_.get(self, type));
+                    let models = _.get(self, type);
+                    if (models instanceof Array) {
+                        // create a new instance of a relationship Object
+                        let newRelationshipObject = Object.create(relationshipObject.relationshipConstructor.prototype);
+                        newRelationshipObject['rm'] = self.rm;
+                        if (newRelationshipObject instanceof BaseResource) {
+                            newRelationshipObject.initAttributes(value, true);
+                            models.push(newRelationshipObject);
+                        }
+                    }
                 }
             }
         });
