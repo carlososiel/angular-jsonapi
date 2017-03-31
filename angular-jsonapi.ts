@@ -57,13 +57,14 @@ export function Attribute() {
     };
 }
 
-export function Relationship() {
+export function Relationship(relationsipConstructor: Function) {
     return function (target: any, propertyName: string | symbol) {
         let annotations = Reflect.getMetadata('Relationships', target) || [];
         let targetType = Reflect.getMetadata('design:type', target, propertyName);
         annotations.push({
             propertyName: propertyName,
-            relationship: targetType
+            relationship: targetType,
+            relationsipConstructor: relationsipConstructor
         });
         Reflect.defineMetadata('Relationships', annotations, target);
         if (!_.get(target, propertyName)) {
@@ -235,8 +236,10 @@ export abstract class BaseResource {
             let type = _.get(value, 'type');
             if (type) {
                 // if current resource have this relationship defined
-                if (annotations.findIndex((item: any) => item['propertyName'] === type) != -1) {
-                    console.log(_.get(self, type))
+                let relationshipObject = annotations.find((item: any) => item['propertyName'] === type);
+                if (relationshipObject) {
+                    debugger;
+                    console.log(_.get(self, type));
                 }
             }
         });
