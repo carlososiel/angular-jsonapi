@@ -59,15 +59,13 @@ export function Attribute() {
 
 export function Relationship(relationshipConstructor: Function) {
     return function (target: any, propertyName: string | symbol) {
-
-
-        let annotations = Reflect.getMetadata('Relationships', target) || [];
+        let annotations = Reflect.getMetadata('Relationships', target) || {};
         let targetType = Reflect.getMetadata('design:type', target, propertyName);
-        annotations.push({
+        annotations[propertyName] = {
             propertyName: propertyName,
             relationship: targetType,
             relationshipConstructor: relationshipConstructor
-        });
+        };
         Reflect.defineMetadata('Relationships', annotations, target);
         if (!_.get(target, propertyName)) {
             Object.defineProperty(target, propertyName as string, {
@@ -126,21 +124,6 @@ export abstract class BaseResource {
                 }
             }
         });
-
-        let relationships = Reflect.getMetadata('Relationships', this) || [];
-
-        // let relationships = Reflect.getMetadata('Relationships', this) || [];
-        // _.forEach(relationships, (item: any) => {
-        //     let propertyName: string = item['propertyName'];
-        //     debugger;
-        //     if (propertyName && !_.get(self, propertyName)) {
-        //         Object.defineProperty(self, propertyName, {
-        //             value: [],
-        //             enumerable: true,
-        //             configurable: true
-        //         });
-        //     }
-        // });
         return this;
     }
 
@@ -233,18 +216,18 @@ export abstract class BaseResource {
 
     syncRelationships(includedData: any[]) {
         let self: any = this;
-        let annotations = Reflect.getMetadata('Relationships', this) || [];
+        let annotations = Reflect.getMetadata('Relationships', this) || {};
 
         _.forEach(includedData, (value: any) => {
             let type = _.get(value, 'type');
             if (type) {
                 // if current resource have this relationship defined
-                let relationshipObject = annotations.find((item: any) => item['propertyName'] === type);
+                let relationshipObject = _.get(annotations, type);
                 if (relationshipObject) {
                     let models = _.get(self, type);
                     if (models instanceof Array) {
                         // create a new instance of a relationship Object
-                        let newRelationshipObject = Object.create(relationshipObject.relationshipConstructor.prototype);
+                        let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
                         newRelationshipObject['rm'] = self.rm;
                         if (newRelationshipObject instanceof BaseResource) {
                             newRelationshipObject.initAttributes(value, true);
