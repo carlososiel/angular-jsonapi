@@ -15,7 +15,7 @@ import {
     OpaqueToken,
     ModuleWithProviders
 } from "@angular/core";
-import { Observable } from 'rxjs/Observable';
+import {Observable} from 'rxjs/Observable';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
@@ -66,6 +66,13 @@ export function Relationship() {
             relationship: targetType
         });
         Reflect.defineMetadata('Relationships', annotations, target);
+        if (!_.get(target, propertyName)) {
+            Object.defineProperty(target, propertyName as string, {
+                value: [],
+                enumerable: true,
+                configurable: true
+            });
+        }
     };
 }
 
@@ -105,9 +112,9 @@ export abstract class BaseResource {
         let self: any = this;
         let annotations = Reflect.getMetadata('Attribute', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (annotations.hasOwnProperty(key)) {
+            if (_.get(annotations, key)) {
                 self[key] = value;
-                
+
                 if (original) {
                     _.extend(annotations[key], {
                         isDirty: false,
@@ -116,6 +123,20 @@ export abstract class BaseResource {
                 }
             }
         });
+
+
+        // let relationships = Reflect.getMetadata('Relationships', this) || [];
+        // _.forEach(relationships, (item: any) => {
+        //     let propertyName: string = item['propertyName'];
+        //     debugger;
+        //     if (propertyName && !_.get(self, propertyName)) {
+        //         Object.defineProperty(self, propertyName, {
+        //             value: [],
+        //             enumerable: true,
+        //             configurable: true
+        //         });
+        //     }
+        // });
         return this;
     }
 
@@ -123,22 +144,27 @@ export abstract class BaseResource {
         const uri = this.rm.buildUri(this, this.id);
         const headers = this.rm.getHeaders();
         if (this.id)
-            return this.rm.http.patch(uri, this.toJsonApi(relationShip), { headers: headers })
+            return this.rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
-                .map((data) => { return this.initAttributes(data, true); });
+                .map((data) => {
+                    return this.initAttributes(data, true);
+                });
         else
-            return this.rm.http.post(uri, this.toJsonApi(relationShip), { headers: headers })
+            return this.rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
-                .map((data) => { return this.initAttributes(data, true); });
+                .map((data) => {
+                    return this.initAttributes(data, true);
+                });
     }
 
     remove(): Observable<Response | any> {
         const uri = this.rm.buildUri(this, this.id);
         const headers = this.rm.getHeaders();
-        return this.rm.http.delete(uri, { headers: headers })
+        return this.rm.http.delete(uri, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.initAttributes(data.data, true); });
+                return this.initAttributes(data.data, true);
+            });
     }
 
     isDirty(): boolean {
@@ -198,7 +224,22 @@ export abstract class BaseResource {
         } else {
             delete data.relationships;
         }
-        return { data: data };
+        return {data: data};
+    }
+
+    syncRelationships(includedData: any[]) {
+        let self: any = this;
+        let annotations = Reflect.getMetadata('Relationships', this) || [];
+
+        _.forEach(includedData, (value: any) => {
+            let type = _.get(value, 'type');
+            if (type) {
+                // if current resource have this relationship defined
+                if (annotations.findIndex((item: any) => item['propertyName'] === type) != -1) {
+                    console.log(_.get(self, type))
+                }
+            }
+        });
     }
 }
 
@@ -297,7 +338,7 @@ export class QueryBuilder {
 
         const uri = this.rm.buildUri(new this.resource, id, queryParams);
         return this.rm.http
-            .get(uri, { search: this.buildParameters(), headers: headers })
+            .get(uri, {search: this.buildParameters(), headers: headers})
             .map(res => res.json())
             .map((data) => {
                 return {
@@ -337,20 +378,22 @@ export class ResourceManager {
         }
     }
 
-    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T{
+    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T {
         let models: T[] = [];
 
-        if(_.isArray(body.data)){
-            body.data.forEach((data: any) => {
+        if (_.isArray(body.data)) {
+            body.data.forEach((data: any, index: number) => {
                 let model: T = new modelType(this, data, true);
-                /*if (body.included) {
-                 model.syncRelationships(data, body.included, 0);
-                 this.addToStore(model);
-                 }*/
+                // if (body.included && data.relationships) {
+                //     model.syncRelationships(data.relationships, body.included, index);
+                // }
                 models.push(model);
             });
-        }else{
-            return new modelType(this, body.data, true);
+        } else {
+            let model = new modelType(this, body.data, true);
+            if (body.included && _.isArray(body.included))
+                model.syncRelationships(body.included);
+            return model;
         }
         return models;
     }
@@ -414,7 +457,7 @@ export class ResourceCollection {
     providers: [ResourceManager, ResourceCollection]
 })
 export class JsonApiModule {
-    constructor( @Optional() @SkipSelf() parentModule: JsonApiModule) {
+    constructor(@Optional() @SkipSelf() parentModule: JsonApiModule) {
         if (parentModule) {
             throw new Error(
                 'JsonApiModule is already loaded. Import it in the AppModule only');
@@ -425,8 +468,8 @@ export class JsonApiModule {
         return {
             ngModule: JsonApiModule,
             providers: [
-                { provide: ResourceManager, useValue: config },
-                { provide: ResourceCollection, useValue: config }
+                {provide: ResourceManager, useValue: config},
+                {provide: ResourceCollection, useValue: config}
             ]
         };
     }
