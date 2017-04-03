@@ -66,13 +66,23 @@ export function Relationship(relationshipConstructor: Function) {
             relationship: targetType,
             relationshipConstructor: relationshipConstructor
         };
-        Reflect.defineMetadata('Relationships', annotations, target);
-        if (!_.get(target, propertyName)) {
-            Object.defineProperty(target, propertyName as string, {
-                value: [],
-                enumerable: true,
-                configurable: true
-            });
+
+        if (delete target[propertyName]) {
+
+            Reflect.defineMetadata('Relationships', annotations, target);
+
+            if (!_.get(target, propertyName)) {
+                Object.defineProperty(target, propertyName as string, {
+                    get: function () {
+                        return this['_' + propertyName.toString()];
+                    },
+                    set: function (newVal: any) {
+                        this['_' + propertyName.toString()] = newVal;
+                    },
+                    enumerable: true,
+                    configurable: true
+                });
+            }
         }
     };
 }
@@ -216,24 +226,24 @@ export abstract class BaseResource {
 
     syncRelationships(includedData: any[]) {
         let self: any = this;
-        let annotations = Reflect.getMetadata('Relationships', this) || {};
+        let annotations = Reflect.getMetadata('Relationships', self) || {};
 
+        // Create relationship objects
         _.forEach(includedData, (value: any) => {
-            let type = _.get(value, 'type');
-            if (type) {
-                // if current resource have this relationship defined
-                let relationshipObject = _.get(annotations, type);
+            let typeRelationship = value.type;
+            if (typeRelationship) {
+                let relationshipObject = annotations[typeRelationship];
+
+                // if this resource has this relationship defined
                 if (relationshipObject) {
-                    let models = _.get(self, type);
-                    if (models instanceof Array) {
-                        // create a new instance of a relationship Object
-                        let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
-                        newRelationshipObject['rm'] = self.rm;
-                        if (newRelationshipObject instanceof BaseResource) {
-                            newRelationshipObject.initAttributes(value, true);
-                            models.push(newRelationshipObject);
-                        }
-                    }
+
+                    let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
+                    newRelationshipObject['rm'] = self.rm;
+                    newRelationshipObject.initAttributes(value, true);
+                    if (!self[typeRelationship] || !_.isArray(self[typeRelationship]))
+                        self[typeRelationship] = [];
+
+                    self[typeRelationship].push(newRelationshipObject);
                 }
             }
         });
@@ -381,9 +391,6 @@ export class ResourceManager {
         if (_.isArray(body.data)) {
             body.data.forEach((data: any, index: number) => {
                 let model: T = new modelType(this, data, true);
-                // if (body.included && data.relationships) {
-                //     model.syncRelationships(data.relationships, body.included, index);
-                // }
                 models.push(model);
             });
         } else {
