@@ -15,7 +15,7 @@ import {
     OpaqueToken,
     ModuleWithProviders
 } from "@angular/core";
-import {Observable} from 'rxjs/Observable';
+import { Observable } from 'rxjs/Observable';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
@@ -113,8 +113,8 @@ export abstract class BaseResource {
             if (data.attributes)
                 this.initAttributes(data, original);
             else
-            // when create a new resource from app
-                this.initAttributes({attributes: data, id: data.id}, original);
+                // when create a new resource from app
+                this.initAttributes({ attributes: data, id: data.id }, original);
         }
     }
 
@@ -141,13 +141,13 @@ export abstract class BaseResource {
         const uri = this.rm.buildUri(this, this.id);
         const headers = this.rm.getHeaders();
         if (this.id)
-            return this.rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
+            return this.rm.http.patch(uri, this.toJsonApi(relationShip), { headers: headers })
                 .map(res => res.json())
                 .map((data) => {
                     return this.initAttributes(data, true);
                 });
         else
-            return this.rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
+            return this.rm.http.post(uri, this.toJsonApi(relationShip), { headers: headers })
                 .map(res => res.json())
                 .map((data) => {
                     return this.initAttributes(data, true);
@@ -157,7 +157,7 @@ export abstract class BaseResource {
     remove(): Observable<Response | any> {
         const uri = this.rm.buildUri(this, this.id);
         const headers = this.rm.getHeaders();
-        return this.rm.http.delete(uri, {headers: headers})
+        return this.rm.http.delete(uri, { headers: headers })
             .map(res => res.json())
             .map((data) => {
                 return this.initAttributes(data.data, true);
@@ -209,9 +209,9 @@ export abstract class BaseResource {
                 if (relationshipsMetaData[typeResource]) {
                     let relation: any[] = [];
                     _.each(value.data, (id: any) => {
-                        relation.push({type: typeResource, id: id})
+                        relation.push({ type: typeResource, id: id })
                     });
-                    _.set(data.relationships, typeResource, {data: relation});
+                    _.set(data.relationships, typeResource, { data: relation });
                 }
             });
 
@@ -220,7 +220,7 @@ export abstract class BaseResource {
         } else {
             delete data.relationships;
         }
-        return {data: data};
+        return { data: data };
     }
 
     syncRelationships(includedData: any[]) {
@@ -249,18 +249,13 @@ export abstract class BaseResource {
     }
 }
 
-export class ValueObject {
-
-    equalTo<T extends ValueObject>(object: T): boolean {
-        return true;
-    }
-}
-
 export class QueryBuilder {
 
     private _fields: string[] = [];
     private _sorts: string[] = [];
     private _filters: string[] = [];
+    private _includes: string[] = [];
+
     private _pageSize: number;
     private _pageNumber: number;
 
@@ -282,6 +277,11 @@ export class QueryBuilder {
         return this;
     }
 
+    include(...args: string[]): QueryBuilder {
+        this._includes = args;
+        return this;
+    }
+
     limit(v: number): QueryBuilder {
         this._pageSize = v;
         return this;
@@ -290,7 +290,7 @@ export class QueryBuilder {
     page(v: number): QueryBuilder {
         this._pageNumber = v;
         return this;
-    }
+    }    
 
     private isAttribute(v: string): boolean {
         const attributesMetadata = Reflect.getMetadata('Attribute', new this.resource);
@@ -306,6 +306,15 @@ export class QueryBuilder {
         for (let f of fields) {
             if (!this.isAttribute(f)) {
                 console.warn(`The attribute ${f} is not part of resource`);
+            }
+        }
+    }
+
+    private validateRelationship() {
+        const relationshipMetadata = Reflect.getMetadata('Relationships', new this.resource);
+        for (let f of this._includes) {
+            if (!relationshipMetadata.hasOwnProperty(f)) {
+                console.warn(`The attribute ${f} don't have relationship with this resource, be shure that is definied in the class`);
             }
         }
     }
@@ -326,6 +335,12 @@ export class QueryBuilder {
             params.push(`fields=${this._fields.join(',')}`);
         }
 
+        this.validateRelationship();
+
+        if (this._includes.length) {
+            params.push(`include=${this._includes.join(',')}`);
+        }
+
         if (this._filters.length) {
             params.push(`filter=${this._filters.join(',')}`);
         }
@@ -337,14 +352,14 @@ export class QueryBuilder {
         return params.join('&');
     }
 
-    execute(id?: string, queryParams?: any): Observable<any> {
+    execute(id?: string): Observable<any> {
         // setting properly header for json-api
 
         const headers = this.rm.getHeaders();
 
-        const uri = this.rm.buildUri(new this.resource, id, queryParams);
+        const uri = this.rm.buildUri(new this.resource, id);
         return this.rm.http
-            .get(uri, {search: this.buildParameters(), headers: headers})
+            .get(uri, { search: this.buildParameters(), headers: headers })
             .map(res => res.json())
             .map((data) => {
                 return {
@@ -366,22 +381,14 @@ export class ResourceManager {
         return new QueryBuilder(r, this);
     }
 
-    buildUri(resource: any, id?: string, queryParams?: any): string {
+    buildUri(resource: any, id?: string): string {
         const resourceMetadata = Reflect.getMetadata('Resource', resource.constructor);
         let apiPath = this.apiUrl;
         const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
         apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
         let params: string = '?';
-        if (queryParams && _.keys(queryParams).length) {
-            _.each(queryParams, (value: any, key: string) => {
-                params += encodeURIComponent(key) + "=" + encodeURIComponent(value) + "&";
-            });
-            params = params.substring(0, params.length - 1);
-            return id ? `${apiPath}\\${id}${params}` : `apiPath${params}`;
 
-        } else {
-            return id ? `${apiPath}\\${id}` : apiPath;
-        }
+        return id ? `${apiPath}\\${id}` : apiPath;
     }
 
     extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T {
@@ -423,7 +430,7 @@ export class ResourceManager {
             data: data
         };
 
-        return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
+        return this.http.post(dataUri[0], jsonApiStructure, { headers: headers })
             .map(res => res.json())
             .map((data) => {
                 return this.initAttributesCollection(resources, data, true);
@@ -447,7 +454,7 @@ export class ResourceManager {
     providers: [ResourceManager]
 })
 export class JsonApiModule {
-    constructor(@Optional() @SkipSelf() parentModule: JsonApiModule) {
+    constructor( @Optional() @SkipSelf() parentModule: JsonApiModule) {
         if (parentModule) {
             throw new Error(
                 'JsonApiModule is already loaded. Import it in the AppModule only');
@@ -458,7 +465,7 @@ export class JsonApiModule {
         return {
             ngModule: JsonApiModule,
             providers: [
-                {provide: ResourceManager, useValue: config}
+                { provide: ResourceManager, useValue: config }
             ]
         };
     }
