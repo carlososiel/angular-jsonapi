@@ -205,9 +205,8 @@ export abstract class BaseResource {
             const relationshipsMetaData = Reflect.getMetadata('Relationships', this);
             _.each(relationShips, (value: any) => {
                 let typeResource = value.type;
-                let index = relationshipsMetaData.findIndex((item: any) => item.propertyName == typeResource)
 
-                if (index != -1) {
+                if (relationshipsMetaData[typeResource]) {
                     let relation: any[] = [];
                     _.each(value.data, (id: any) => {
                         relation.push({type: typeResource, id: id})
@@ -373,7 +372,7 @@ export class ResourceManager {
         const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
         apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
         let params: string = '?';
-        if (_.keys(queryParams).length) {
+        if (queryParams && _.keys(queryParams).length) {
             _.each(queryParams, (value: any, key: string) => {
                 params += encodeURIComponent(key) + "=" + encodeURIComponent(value) + "&";
             });
