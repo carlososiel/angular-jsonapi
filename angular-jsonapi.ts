@@ -438,26 +438,13 @@ export class ResourceManager {
     }
 }
 
-@Injectable()
-export class ResourceCollection {
-    constructor(public http: Http) {
-    }
-
-    save<T extends BaseResource>(resources: T[]): void {
-        // create structure for json-api
-        _.each(resources, (resource: any, key: string) => {
-        });
-        // return Observable.of([{one:1,two:2}]);
-    }
-}
-
 /**
  * Module for angular-jsonapi
  * @experimental
  */
 @NgModule({
     imports: [HttpModule],
-    providers: [ResourceManager, ResourceCollection]
+    providers: [ResourceManager]
 })
 export class JsonApiModule {
     constructor(@Optional() @SkipSelf() parentModule: JsonApiModule) {
@@ -471,8 +458,7 @@ export class JsonApiModule {
         return {
             ngModule: JsonApiModule,
             providers: [
-                {provide: ResourceManager, useValue: config},
-                {provide: ResourceCollection, useValue: config}
+                {provide: ResourceManager, useValue: config}
             ]
         };
     }
