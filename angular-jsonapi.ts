@@ -256,6 +256,19 @@ export abstract class BaseResource {
             }
         });
     }
+
+    /**
+     * Return data with json format
+     */
+    getData(): any {
+        let resourceData: any = {id: this.id};
+
+        let annotations = Reflect.getMetadata('Attribute', this);
+        _.forEach(annotations, (value: any, key: string) => {
+            resourceData[key] = value['newValue'];
+        });
+        return resourceData;
+    }
 }
 
 export class QueryBuilder {
