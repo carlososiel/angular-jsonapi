@@ -111,14 +111,20 @@ export abstract class BaseResource {
     constructor(data?: any, original: boolean = false) {
         if (data) {
             if (data.attributes)
-                this.initAttributes(data, original);
+                this.syncResourceData(data, original);
             else
             // when create a new resource from app
-                this.initAttributes({attributes: data, id: data.id}, original);
+                this.syncResourceData({attributes: data, id: data.id}, original);
         }
     }
 
-    initAttributes(data: any, original: boolean) {
+    /**
+     * Set a value for attributes
+     * @param data
+     * @param original
+     * @returns {BaseResource}
+     */
+    syncResourceData(data: any, original: boolean = false) {
         this.id = data.id;
         let self: any = this;
         let annotations = Reflect.getMetadata('Attribute', this);
@@ -137,6 +143,12 @@ export abstract class BaseResource {
         return this;
     }
 
+    /**
+     *
+     * @param rm ResourceManager that handle http request
+     * @param relationShip
+     * @returns {Observable<T>}
+     */
     save(rm: ResourceManager, relationShip: string[] = []): Observable<Response | any> {
         const uri = rm.buildUri(this, this.id);
         const headers = rm.getHeaders();
@@ -144,13 +156,13 @@ export abstract class BaseResource {
             return rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.initAttributes(data, true);
+                    return this.syncResourceData(data, true);
                 });
         else
             return rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.initAttributes(data, true);
+                    return this.syncResourceData(data, true);
                 });
     }
 
@@ -160,7 +172,7 @@ export abstract class BaseResource {
         return rm.http.delete(uri, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.initAttributes(data.data, true);
+                return this.syncResourceData(data.data, true);
             });
     }
 
@@ -236,7 +248,7 @@ export abstract class BaseResource {
                 // if this resource has this relationship defined
                 if (relationshipObject) {
                     let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
-                    newRelationshipObject.initAttributes(value, true);
+                    newRelationshipObject.syncResourceData(value, true);
                     if (!self[typeRelationship] || !_.isArray(self[typeRelationship]))
                         self[typeRelationship] = [];
                     self[typeRelationship].push(newRelationshipObject);
@@ -412,6 +424,11 @@ export class ResourceManager {
         return headers;
     }
 
+    /**
+     *  Save a collection
+     * @param resources
+     * @returns {Observable<R>}
+     */
     saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
         let data: any[] = [];
         let dataUri: any[] = [];
@@ -430,14 +447,14 @@ export class ResourceManager {
         return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.initAttributesCollection(resources, data, true);
+                return this.syncCollectionData(resources, data, true);
             });
     }
 
-    initAttributesCollection<T extends BaseResource>(resources: T[], dataResources: any, original: boolean): T[] {
+    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any, original: boolean): T[] {
         let models: T[] = [];
         for (let i = 0; i < resources.length; i++)
-            models.push(resources[i].initAttributes(dataResources.data[i], original));
+            models.push(resources[i].syncResourceData(dataResources.data[i], original));
         return models;
     }
 }
