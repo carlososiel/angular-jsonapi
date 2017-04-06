@@ -29,7 +29,7 @@ export function Attribute() {
             let annotations = Reflect.getMetadata('Attribute', target) || {};
 
             annotations[propertyName] = {
-                isDirty: isNew ? false : (annotations[propertyName].originalValue != value),
+                isDirty: isNew ? false : !_.isEqual(annotations[propertyName].originalValue, value),
                 newValue: value,
                 originalValue: original ? value : (annotations[propertyName].originalValue)
             };
@@ -98,23 +98,30 @@ export function Resource(config: IResourceConfig) {
     };
 }
 
-export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager, data?: any, original?: boolean): T; };
+export type ResourceType<T extends BaseResource> = { new (data?: any, original?: boolean): T; };
 
 export abstract class BaseResource {
 
     id: string;
 
     createdAt: string;
-    updateAt: string;
-    deleteAt: string;
+    updatedAt: string;
+    deletedAt: string;
 
     constructor(data?: any, original: boolean = false) {
         if (data) {
+            if(!(data.id && !data.createdAt))
+                this.createdAt = new Date().getTime().toString();
+
+            this.createdAt = data.createdAt? data.createdAt : this.createdAt;
+            this.updatedAt = data.updatedAt? data.updatedAt: this.updatedAt;
+            this.deletedAt = data.deletedAt? data.deletedAt: this.deletedAt;
+
             if (data.attributes)
-                this.syncResourceData(data, original);
+                this.initAttributes(data, original);
             else
             // when create a new resource from app
-                this.syncResourceData({attributes: data, id: data.id}, original);
+                this.initAttributes({attributes: data, id: data.id}, original);
         }
     }
 
@@ -124,7 +131,7 @@ export abstract class BaseResource {
      * @param original
      * @returns {BaseResource}
      */
-    syncResourceData(data: any, original: boolean = false) {
+    initAttributes(data: any, original: boolean = false) {
         this.id = data.id;
         let self: any = this;
         let annotations = Reflect.getMetadata('Attribute', this);
@@ -144,6 +151,16 @@ export abstract class BaseResource {
     }
 
     /**
+     * Sync data with resource attributes
+     * @param data
+     */
+    syncResourceData(data: any) {
+        const {id} = data;
+        delete data.id;
+        this.initAttributes({id: id, attributes: data});
+    }
+
+    /**
      *
      * @param rm ResourceManager that handle http request
      * @param relationShip
@@ -156,13 +173,13 @@ export abstract class BaseResource {
             return rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.syncResourceData(data, true);
+                    return this.initAttributes(data, true);
                 });
         else
             return rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.syncResourceData(data, true);
+                    return this.initAttributes(data, true);
                 });
     }
 
@@ -172,7 +189,7 @@ export abstract class BaseResource {
         return rm.http.delete(uri, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.syncResourceData(data.data, true);
+                return this.initAttributes(data.data, true);
             });
     }
 
@@ -248,7 +265,7 @@ export abstract class BaseResource {
                 // if this resource has this relationship defined
                 if (relationshipObject) {
                     let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
-                    newRelationshipObject.syncResourceData(value, true);
+                    newRelationshipObject.initAttributes(value, true);
                     if (!self[typeRelationship] || !_.isArray(self[typeRelationship]))
                         self[typeRelationship] = [];
                     self[typeRelationship].push(newRelationshipObject);
@@ -260,12 +277,20 @@ export abstract class BaseResource {
     /**
      * Return data with json format
      */
-    getData(): any {
-        let resourceData: any = {id: this.id};
+    getData(showCreateAt: boolean = false): any {
+        let self: any = this;
+        let resourceData: any = {
+            id: this.id,
+            createdAt: this.createdAt
+        };
 
-        let annotations = Reflect.getMetadata('Attribute', this);
-        _.forEach(annotations, (value: any, key: string) => {
-            resourceData[key] = value['newValue'];
+        if(!showCreateAt)
+            delete resourceData.createdAt;
+
+        let attributes = Reflect.getMetadata('Attribute', this);
+
+        _.forEach(attributes, (value: any, key: string) => {
+            resourceData[key] = self[key];
         });
         return resourceData;
     }
@@ -460,15 +485,32 @@ export class ResourceManager {
         return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.syncCollectionData(resources, data, true);
+                return this.initAttributesRelationship(resources, data, true);
             });
     }
 
-    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any, original: boolean): T[] {
+    initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any, original: boolean = false): T[] {
         let models: T[] = [];
-        for (let i = 0; i < resources.length; i++)
-            models.push(resources[i].syncResourceData(dataResources.data[i], original));
+        _.forEach(resources, (resource: T, index: number) => {
+            models.push(resource.initAttributes(dataResources.data[index], original));
+        });
         return models;
+    }
+
+    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any[]) {
+        this.initAttributesRelationship(resources, dataResources.map(data => {
+            const {id} = data;
+            delete data.id;
+            return {'id': id, 'attributes': data}
+        }));
+    }
+
+    isDirtyCollection<T extends BaseResource>(resources: T[]): boolean {
+        _.forEach(resources, (resource: T) => {
+            if(resource.isDirty())
+                return true;
+        });
+        return false;
     }
 }
 
