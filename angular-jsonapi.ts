@@ -25,28 +25,19 @@ import * as _ from 'lodash';
 export function Attribute() {
     return function (target: any, propertyName: string) {
 
-        let saveAnnotations = function (value: any, original: boolean, isNew: boolean = false) {
-            let annotations = Reflect.getMetadata('Attribute', target) || {};
-
-            annotations[propertyName] = {
-                isDirty: isNew ? false : !_.isEqual(annotations[propertyName].originalValue, value),
-                newValue: value,
-                originalValue: original ? value : (annotations[propertyName].originalValue)
-            };
-            Reflect.defineMetadata('Attribute', annotations, target);
-        };
+        let annotations = Reflect.getMetadata('Attributes', target) || [];
+        annotations.push(propertyName);
+        Reflect.defineMetadata('Attributes', annotations, target);
 
         let getter = function () {
             return this['_' + propertyName];
         };
 
         let setter = function (newVal: any) {
-            saveAnnotations(newVal, false);
             this['_' + propertyName] = newVal;
         };
 
         if (delete target[propertyName]) {
-            saveAnnotations(undefined, true, true);
             Object.defineProperty(target, propertyName, {
                 get: getter,
                 set: setter,
@@ -108,20 +99,20 @@ export abstract class BaseResource {
     updatedAt: string;
     deletedAt: string;
 
-    constructor(data?: any, original: boolean = false) {
+    constructor(data?: any) {
         if (data) {
-            if(!(data.id && !data.createdAt))
+            if (!(data.id && !data.createdAt))
                 this.createdAt = new Date().getTime().toString();
 
-            this.createdAt = data.createdAt? data.createdAt : this.createdAt;
-            this.updatedAt = data.updatedAt? data.updatedAt: this.updatedAt;
-            this.deletedAt = data.deletedAt? data.deletedAt: this.deletedAt;
+            this.createdAt = data.createdAt ? data.createdAt : this.createdAt;
+            this.updatedAt = data.updatedAt ? data.updatedAt : this.updatedAt;
+            this.deletedAt = data.deletedAt ? data.deletedAt : this.deletedAt;
 
             if (data.attributes)
-                this.initAttributes(data, original);
+                this.initAttributes(data);
             else
             // when create a new resource from app
-                this.initAttributes({attributes: data, id: data.id}, original);
+                this.initAttributes({attributes: data, id: data.id});
         }
     }
 
@@ -131,33 +122,15 @@ export abstract class BaseResource {
      * @param original
      * @returns {BaseResource}
      */
-    initAttributes(data: any, original: boolean = false) {
+    initAttributes(data: any) {
         this.id = data.id;
         let self: any = this;
-        let annotations = Reflect.getMetadata('Attribute', this);
+        let annotations = Reflect.getMetadata('Attributes', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (_.get(annotations, key)) {
+            if (_.findIndex(annotations, (attr: string) => attr === key) != -1)
                 self[key] = value;
-
-                if (original) {
-                    _.extend(annotations[key], {
-                        isDirty: false,
-                        originalValue: value
-                    });
-                }
-            }
         });
         return this;
-    }
-
-    /**
-     * Sync data with resource attributes
-     * @param data
-     */
-    syncResourceData(data: any) {
-        const {id} = data;
-        delete data.id;
-        this.initAttributes({id: id, attributes: data});
     }
 
     /**
@@ -173,13 +146,13 @@ export abstract class BaseResource {
             return rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.initAttributes(data, true);
+                    return this.initAttributes(data);
                 });
         else
             return rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
                 .map(res => res.json())
                 .map((data) => {
-                    return this.initAttributes(data, true);
+                    return this.initAttributes(data);
                 });
     }
 
@@ -188,22 +161,18 @@ export abstract class BaseResource {
         const headers = rm.getHeaders();
         return rm.http.delete(uri, {headers: headers})
             .map(res => res.json())
-            .map((data) => {
-                return this.initAttributes(data.data, true);
+            .map((res) => {
+                return this.initAttributes(res.data);
             });
     }
 
-    isDirty(): boolean {
-        let dirty = false;
-        const annotations = Reflect.getMetadata('Attribute', this);
-        for (let i in annotations) {
-            const value = annotations[i];
-            if (_.get(value, 'isDirty')) {
-                dirty = true;
-                break;
-            }
-        }
-        return dirty;
+    isDirty(data: any): boolean {
+        let self: any = this;
+        const annotations = Reflect.getMetadata('Attributes', this);
+        for (let index in annotations)
+            if (!_.isEqual(self[annotations[index]], data[index]))
+                return true;
+        return false;
     }
 
     /**
@@ -214,7 +183,7 @@ export abstract class BaseResource {
     toJsonApi(relationShips: string[] = []) {
         let self: any = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
-        const annotations = Reflect.getMetadata('Attribute', this);
+        const annotations = Reflect.getMetadata('Attributes', this);
         let data = {
             type: resourceMeta.type,
             attributes: {},
@@ -223,11 +192,7 @@ export abstract class BaseResource {
         if (this.id) {
             _.set(data, 'id', this.id);
         }
-        _.each(annotations, function (value: any, key: string) {
-            if (_.get(value, 'isDirty')) {
-                _.set(data.attributes, key, self[key]);
-            }
-        });
+        _.each(annotations, (attr: string) => _.set(data.attributes, attr, self[attr]));
 
         if (relationShips.length) {
 
@@ -284,13 +249,13 @@ export abstract class BaseResource {
             createdAt: this.createdAt
         };
 
-        if(!showCreateAt)
+        if (!showCreateAt)
             delete resourceData.createdAt;
 
-        let attributes = Reflect.getMetadata('Attribute', this);
+        let attributes = Reflect.getMetadata('Attributes', this);
 
-        _.forEach(attributes, (value: any, key: string) => {
-            resourceData[key] = self[key];
+        _.forEach(attributes, (attr: string) => {
+            resourceData[attr] = self[attr];
         });
         return resourceData;
     }
@@ -340,8 +305,8 @@ export class QueryBuilder {
     }
 
     private isAttribute(v: string): boolean {
-        const attributesMetadata = Reflect.getMetadata('Attribute', new this.resource);
-        return attributesMetadata.hasOwnProperty(v);
+        const attributesMetadata = Reflect.getMetadata('Attributes', new this.resource);
+        return _.findIndex(attributesMetadata, (attr: string) => attr === v) != -1;
     }
 
     private validateAttributes() {
@@ -443,11 +408,11 @@ export class ResourceManager {
 
         if (_.isArray(body.data)) {
             body.data.forEach((data: any) => {
-                let model: T = new modelType(data, true);
+                let model: T = new modelType(data);
                 models.push(model);
             });
         } else {
-            let model = new modelType(body.data, true);
+            let model = new modelType(body.data);
             if (body.included && _.isArray(body.included))
                 model.syncRelationships(body.included);
             return model;
@@ -485,29 +450,21 @@ export class ResourceManager {
         return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.initAttributesRelationship(resources, data, true);
+                return this.initAttributesRelationship(resources, data);
             });
     }
 
-    initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any, original: boolean = false): T[] {
+    initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any): T[] {
         let models: T[] = [];
         _.forEach(resources, (resource: T, index: number) => {
-            models.push(resource.initAttributes(dataResources.data[index], original));
+            models.push(resource.initAttributes(dataResources[index]));
         });
         return models;
     }
 
-    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any[]) {
-        this.initAttributesRelationship(resources, dataResources.map(data => {
-            const {id} = data;
-            delete data.id;
-            return {'id': id, 'attributes': data}
-        }));
-    }
-
-    isDirtyCollection<T extends BaseResource>(resources: T[]): boolean {
-        _.forEach(resources, (resource: T) => {
-            if(resource.isDirty())
+    isDirtyCollection<T extends BaseResource>(resources: T[], dataResources: any[]): boolean {
+        _.forEach(resources, (resource: T, index: number) => {
+            if (resource.isDirty(dataResources[index]))
                 return true;
         });
         return false;
