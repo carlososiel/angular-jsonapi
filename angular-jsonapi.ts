@@ -94,20 +94,13 @@ export type ResourceType<T extends BaseResource> = { new (data?: any, original?:
 export abstract class BaseResource {
 
     id: string;
-
+    dirtyValues:any;
     createdAt: string;
     updatedAt: string;
     deletedAt: string;
 
     constructor(data?: any) {
         if (data) {
-            if (!(data.id && !data.createdAt))
-                this.createdAt = new Date().getTime().toString();
-
-            this.createdAt = data.createdAt ? data.createdAt : this.createdAt;
-            this.updatedAt = data.updatedAt ? data.updatedAt : this.updatedAt;
-            this.deletedAt = data.deletedAt ? data.deletedAt : this.deletedAt;
-
             if (data.attributes)
                 this.initAttributes(data);
             else
@@ -117,12 +110,21 @@ export abstract class BaseResource {
     }
 
     /**
-     * Set a value for attributes
+     * Set initial values in that method
      * @param data
      * @param original
      * @returns {BaseResource}
      */
     initAttributes(data: any) {
+
+        this.dirtyValues = {};
+        this.createdAt = null;
+        if (!(data.id && !data.createdAt))
+            this.createdAt = new Date().getTime().toString();
+        this.createdAt = data.createdAt ? data.createdAt : this.createdAt;
+        this.updatedAt = data.updatedAt ? data.updatedAt : this.updatedAt;
+        this.deletedAt = data.deletedAt ? data.deletedAt : this.deletedAt;
+
         this.id = data.id;
         let self: any = this;
         let annotations = Reflect.getMetadata('Attributes', this);
@@ -166,13 +168,18 @@ export abstract class BaseResource {
             });
     }
 
-    isDirty(data: any): boolean {
+    syncData(data: any): void {
         let self: any = this;
         const annotations = Reflect.getMetadata('Attributes', this);
-        for (let index in annotations)
-            if (!_.isEqual(self[annotations[index]], data[index]))
-                return true;
-        return false;
+        for (let index in annotations) {
+            const attr = annotations[index];
+            if (!_.isEqual(self[attr], data[attr]))
+                self.dirtyValues[attr] = data[attr];
+        }
+    }
+
+    isDirty(): boolean {
+        return _.keys(this.dirtyValues).length > 0
     }
 
     /**
@@ -230,7 +237,7 @@ export abstract class BaseResource {
                 // if this resource has this relationship defined
                 if (relationshipObject) {
                     let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
-                    newRelationshipObject.initAttributes(value, true);
+                    newRelationshipObject.initAttributes(value);
                     if (!self[typeRelationship] || !_.isArray(self[typeRelationship]))
                         self[typeRelationship] = [];
                     self[typeRelationship].push(newRelationshipObject);
@@ -457,17 +464,23 @@ export class ResourceManager {
     initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any): T[] {
         let models: T[] = [];
         _.forEach(resources, (resource: T, index: number) => {
-            models.push(resource.initAttributes(dataResources[index]));
+            resource.initAttributes(dataResources[index]);
+            models.push(resource);
         });
         return models;
     }
 
-    isDirtyCollection<T extends BaseResource>(resources: T[], dataResources: any[]): boolean {
-        _.forEach(resources, (resource: T, index: number) => {
-            if (resource.isDirty(dataResources[index]))
+    isDirtyCollection<T extends BaseResource>(resources: T[]): boolean {
+        for(let i in resources)
+            if (resources[i].isDirty())
                 return true;
-        });
         return false;
+    }
+
+    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any[]): void {
+        _.forEach(resources, (resource: T, index: number) => {
+            resource.syncData(dataResources[index]);
+        });
     }
 }
 
