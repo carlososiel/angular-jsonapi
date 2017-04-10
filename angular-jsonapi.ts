@@ -94,7 +94,7 @@ export type ResourceType<T extends BaseResource> = { new (data?: any, original?:
 export abstract class BaseResource {
 
     id: string;
-    dirtyValues:any;
+    attributeStates: any;
     createdAt: string;
     updatedAt: string;
     deletedAt: string;
@@ -117,7 +117,7 @@ export abstract class BaseResource {
      */
     initAttributes(data: any) {
 
-        this.dirtyValues = {};
+        this.attributeStates = {};
         this.createdAt = null;
         if (!(data.id && !data.createdAt))
             this.createdAt = new Date().getTime().toString();
@@ -129,8 +129,17 @@ export abstract class BaseResource {
         let self: any = this;
         let annotations = Reflect.getMetadata('Attributes', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (_.findIndex(annotations, (attr: string) => attr === key) != -1)
+            if (_.findIndex(annotations, (attr: string) => attr === key) != -1) {
                 self[key] = value;
+
+                // add values for that key if doesn't exist
+                self.attributeStates[key] = {
+                    originalValue: value,
+                    value: value,
+                    dirty: false
+                }
+            }
+
         });
         return this;
     }
@@ -173,13 +182,20 @@ export abstract class BaseResource {
         const annotations = Reflect.getMetadata('Attributes', this);
         for (let index in annotations) {
             const attr = annotations[index];
-            if (!_.isEqual(self[attr], data[attr]))
-                self.dirtyValues[attr] = data[attr];
+            //save attribute state
+            if (!_.isEqual(self[attr], data[attr])) {
+                self[attr] = data[attr];
+                self.attributeStates[attr]['value'] = data[attr];
+                self.attributeStates[attr]['dirty'] = true;
+            }
         }
     }
 
     isDirty(): boolean {
-        return _.keys(this.dirtyValues).length > 0
+        for (let key of Object.keys(this.attributeStates))
+            if (this.attributeStates[key].dirty)
+                return true;
+        return false;
     }
 
     /**
@@ -405,8 +421,6 @@ export class ResourceManager {
         let apiPath = this.apiUrl;
         const resourceUri = _.get(resourceMetadata, 'uri') ? _.get(resourceMetadata, 'uri') : resourceMetadata.type;
         apiPath += apiPath[apiPath.length - 1] === '/' ? resourceUri : `/${resourceUri}`;
-        let params: string = '?';
-
         return id ? `${apiPath}\\${id}` : apiPath;
     }
 
@@ -440,13 +454,16 @@ export class ResourceManager {
      * @returns {Observable<R>}
      */
     saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
+        debugger;
         let data: any[] = [];
         let dataUri: any[] = [];
         const headers = this.getHeaders();
 
-        _.each(resources, (resource: any) => {
-            dataUri.push(this.buildUri(resource, resource.id));
-            data.push(resource.toJsonApi().data);
+        _.each(resources, (resource: T) => {
+            if(resource.isDirty()){
+                dataUri.push(this.buildUri(resource, resource.id));
+                data.push(resource.toJsonApi().data);
+            }
         });
 
         // Structure to create several resources
@@ -457,7 +474,7 @@ export class ResourceManager {
         return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
             .map(res => res.json())
             .map((data) => {
-                return this.initAttributesRelationship(resources, data);
+                return this.initAttributesRelationship(resources, data.data);
             });
     }
 
@@ -471,16 +488,11 @@ export class ResourceManager {
     }
 
     isDirtyCollection<T extends BaseResource>(resources: T[]): boolean {
-        for(let i in resources)
-            if (resources[i].isDirty())
+        for (let i in resources)
+            // if doesn't have id or is dirty
+            if (resources[i].isDirty() || !resources[i].id)
                 return true;
         return false;
-    }
-
-    syncCollectionData<T extends BaseResource>(resources: T[], dataResources: any[]): void {
-        _.forEach(resources, (resource: T, index: number) => {
-            resource.syncData(dataResources[index]);
-        });
     }
 }
 
