@@ -20,6 +20,7 @@ import 'rxjs/add/operator/map';
 import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
 import 'rxjs/add/observable/throw';
+import 'rxjs/add/observable/forkJoin'
 import * as _ from 'lodash';
 
 export function Attribute() {
@@ -94,7 +95,7 @@ export type ResourceType<T extends BaseResource> = { new (data?: any, original?:
 export abstract class BaseResource {
 
     id: string;
-    attributeStates: any;
+    private attributeStates: any;
     createdAt: string;
     updatedAt: string;
     deletedAt: string;
@@ -132,7 +133,7 @@ export abstract class BaseResource {
             if (_.findIndex(annotations, (attr: string) => attr === key) != -1) {
                 self[key] = value;
 
-                // add values for that key if doesn't exist
+                // Save attr state
                 self.attributeStates[key] = {
                     originalValue: value,
                     value: value,
@@ -203,7 +204,7 @@ export abstract class BaseResource {
      * @param relationShip resources that has a relationship with this resource
      * @returns {{data: {type, attributes: {}}}}
      */
-    toJsonApi(relationShips: string[] = []) {
+    toJsonApi(relationShips: string[] = [], onlyDirtyAttributes: boolean = false) {
         let self: any = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
         const annotations = Reflect.getMetadata('Attributes', this);
@@ -215,7 +216,15 @@ export abstract class BaseResource {
         if (this.id) {
             _.set(data, 'id', this.id);
         }
-        _.each(annotations, (attr: string) => _.set(data.attributes, attr, self[attr]));
+        _.each(annotations, (attr: string) => {
+            if (onlyDirtyAttributes) {
+                if (self.attributeStates[attr].dirty)
+                    _.set(data.attributes, attr, self[attr])
+
+            } else {
+                _.set(data.attributes, attr, self[attr])
+            }
+        });
 
         if (relationShips.length) {
 
@@ -449,33 +458,47 @@ export class ResourceManager {
     }
 
     /**
-     *  Save a collection
+     *  Save, update or remove a collection of resources of the same type
      * @param resources
      * @returns {Observable<R>}
      */
     saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
-        debugger;
-        let data: any[] = [];
-        let dataUri: any[] = [];
+
         const headers = this.getHeaders();
 
+        const dataDirtyResources = {
+            data: <any[]> [],
+            uri: ""
+        };
+
+        const dataRemovedResources = {
+            data: <any[]> [],
+            uri: ""
+        };
+        const dataNewResources = {
+            data: <any[]> [],
+            uri: ""
+        };
+
+
         _.each(resources, (resource: T) => {
-            if(resource.isDirty()){
-                dataUri.push(this.buildUri(resource, resource.id));
-                data.push(resource.toJsonApi().data);
+            //Grouping dirty resources
+            if (resource.isDirty()) {
+                dataDirtyResources.uri = this.buildUri(resource, resource.id);
+                dataDirtyResources.data.push(resource.toJsonApi([], true).data);
+            } else if (!resource.id) { //Grouping new resources
+                dataNewResources.uri = this.buildUri(resource);
+                dataNewResources.data.push(resource.toJsonApi([]).data);
             }
         });
 
-        // Structure to create several resources
-        const jsonApiStructure = {
-            data: data
-        };
 
-        return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
-            .map(res => res.json())
-            .map((data) => {
-                return this.initAttributesRelationship(resources, data.data);
-            });
+
+        return this.http.post("", {}, {headers: headers});
+        /*.map(res => res.json())
+         .map((data) => {
+         return this.initAttributesRelationship(resources, data.data);
+         });*/
     }
 
     initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any): T[] {
