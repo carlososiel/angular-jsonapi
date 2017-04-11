@@ -463,38 +463,52 @@ export class ResourceManager {
      * @returns {Observable<R>}
      */
     saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
-
         const headers = this.getHeaders();
+        let observableNewResources: any[] = [];
+        let observableModifiedResources: any[] = [];
+        let observableRemoveResources: any[] = [];
 
-        const dataDirtyResources = {
-            data: <any[]> [],
-            uri: ""
-        };
-
-        const dataRemovedResources = {
-            data: <any[]> [],
-            uri: ""
-        };
-        const dataNewResources = {
-            data: <any[]> [],
-            uri: ""
-        };
-
+        let newResources: T[] = [];
+        let editResources: T[] = [];
 
         _.each(resources, (resource: T) => {
             //Grouping dirty resources
             if (resource.isDirty()) {
-                dataDirtyResources.uri = this.buildUri(resource, resource.id);
-                dataDirtyResources.data.push(resource.toJsonApi([], true).data);
+                observableModifiedResources.push(this.http.patch(this.buildUri(resource, resource.id), resource.toJsonApi([],true), {headers: headers}));
+                editResources.push(resource);
             } else if (!resource.id) { //Grouping new resources
-                dataNewResources.uri = this.buildUri(resource);
-                dataNewResources.data.push(resource.toJsonApi([]).data);
+                observableNewResources.push(this.http.post(this.buildUri(resource), resource.toJsonApi([]), {headers: headers}));
+                newResources.push(resource);
             }
         });
 
+        let create = observableNewResources.length ? Observable.forkJoin(observableNewResources) : Observable.of([]);
+        let edit = observableModifiedResources.length ? Observable.forkJoin(observableModifiedResources) : Observable.of([]);
+        let remove = observableRemoveResources.length ? Observable.forkJoin(observableRemoveResources) : Observable.of([]);
+
+        return Observable.forkJoin(create, edit, remove)
+            .map((res) => {
+                let response = {created: <T[]> [], edited: <T[]> [], removed: <any[]> []};
+
+                // Populate created resources using response server
+                const responseCreatedResources = res[0];
+                _.forEach(responseCreatedResources, (res: Response, index: number) => {
+                    newResources[index].initAttributes(res.json().data);
+                    response.created.push(newResources[index]);
+                });
+
+                // Populate edited resources using response server
+                const responseEditedResources = res[1];
+                _.forEach(responseEditedResources, (res: Response, index: number) => {
+                    editResources[index].initAttributes(res.json().data);
+                    response.edited.push(editResources[index]);
+                });
+
+                return response;
+            });
 
 
-        return this.http.post("", {}, {headers: headers});
+        //return this.http.post("", {}, {headers: headers});
         /*.map(res => res.json())
          .map((data) => {
          return this.initAttributesRelationship(resources, data.data);
