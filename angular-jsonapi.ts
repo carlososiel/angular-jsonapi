@@ -506,13 +506,6 @@ export class ResourceManager {
 
                 return response;
             });
-
-
-        //return this.http.post("", {}, {headers: headers});
-        /*.map(res => res.json())
-         .map((data) => {
-         return this.initAttributesRelationship(resources, data.data);
-         });*/
     }
 
     initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any): T[] {
