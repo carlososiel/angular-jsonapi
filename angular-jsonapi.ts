@@ -458,11 +458,11 @@ export class ResourceManager {
     }
 
     /**
-     *  Save, update or remove a collection of resources of the same type
+     *  Perform create, update or remove resources
      * @param resources
      * @returns {Observable<R>}
      */
-    saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
+    saveCollection<T extends BaseResource>(resources: T[], resourceToDelete: T[] = []): Observable<any> {
         const headers = this.getHeaders();
         let observableNewResources: any[] = [];
         let observableModifiedResources: any[] = [];
@@ -482,6 +482,9 @@ export class ResourceManager {
             }
         });
 
+        for(let i in resourceToDelete)
+            observableRemoveResources.push(this.http.delete(this.buildUri(resourceToDelete[i], resourceToDelete[i].id), {headers: headers}));
+
         let create = observableNewResources.length ? Observable.forkJoin(observableNewResources) : Observable.of([]);
         let edit = observableModifiedResources.length ? Observable.forkJoin(observableModifiedResources) : Observable.of([]);
         let remove = observableRemoveResources.length ? Observable.forkJoin(observableRemoveResources) : Observable.of([]);
@@ -490,18 +493,25 @@ export class ResourceManager {
             .map((res) => {
                 let response = {created: <T[]> [], edited: <T[]> [], removed: <any[]> []};
 
-                // Populate created resources using response server
+                // Build created resources objects using response server
                 const responseCreatedResources = res[0];
                 _.forEach(responseCreatedResources, (res: Response, index: number) => {
                     newResources[index].initAttributes(res.json().data);
                     response.created.push(newResources[index]);
                 });
 
-                // Populate edited resources using response server
+                // Build edited resources objects using response server
                 const responseEditedResources = res[1];
                 _.forEach(responseEditedResources, (res: Response, index: number) => {
                     editResources[index].initAttributes(res.json().data);
                     response.edited.push(editResources[index]);
+                });
+
+                // Build removed resources objects using response server
+                const responseRemovedResources = res[2];
+                _.forEach(responseRemovedResources, (res: Response, index: number) => {
+                    resourceToDelete[index].initAttributes(res.json().data);
+                    response.removed.push(resourceToDelete[index]);
                 });
 
                 return response;
