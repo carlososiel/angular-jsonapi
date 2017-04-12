@@ -181,13 +181,26 @@ export abstract class BaseResource {
     syncData(data: any): void {
         let self: any = this;
         const annotations = Reflect.getMetadata('Attributes', this);
+
+        if (this.isNew())
+            this.attributeStates = {};
+
         for (let index in annotations) {
             const attr = annotations[index];
-            //save attribute state
-            if (!_.isEqual(self[attr], data[attr])) {
+            if (this.isNew()) {
                 self[attr] = data[attr];
-                self.attributeStates[attr]['value'] = data[attr];
-                self.attributeStates[attr]['dirty'] = true;
+                self.attributeStates[attr] = {
+                    originalValue: data[attr],
+                    value: data[attr],
+                    dirty: false
+                };
+            } else {
+                //save attribute state
+                if (!_.isEqual(self[attr], data[attr])) {
+                    self[attr] = data[attr];
+                    self.attributeStates[attr]['value'] = data[attr];
+                    self.attributeStates[attr]['dirty'] = true;
+                }
             }
         }
     }
@@ -197,6 +210,10 @@ export abstract class BaseResource {
             if (this.attributeStates[key].dirty)
                 return true;
         return false;
+    }
+
+    isNew(): boolean {
+        return this.id ? false : true
     }
 
     /**
@@ -462,11 +479,10 @@ export class ResourceManager {
      * @param resources
      * @returns {Observable<R>}
      */
-    saveCollection<T extends BaseResource>(resources: T[], resourceToDelete: T[] = []): Observable<any> {
+    saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
         const headers = this.getHeaders();
         let observableNewResources: any[] = [];
         let observableModifiedResources: any[] = [];
-        let observableRemoveResources: any[] = [];
 
         let newResources: T[] = [];
         let editResources: T[] = [];
@@ -474,7 +490,7 @@ export class ResourceManager {
         _.each(resources, (resource: T) => {
             //Grouping dirty resources
             if (resource.isDirty()) {
-                observableModifiedResources.push(this.http.patch(this.buildUri(resource, resource.id), resource.toJsonApi([],true), {headers: headers}));
+                observableModifiedResources.push(this.http.patch(this.buildUri(resource, resource.id), resource.toJsonApi([], true), {headers: headers}));
                 editResources.push(resource);
             } else if (!resource.id) { //Grouping new resources
                 observableNewResources.push(this.http.post(this.buildUri(resource), resource.toJsonApi([]), {headers: headers}));
@@ -482,39 +498,49 @@ export class ResourceManager {
             }
         });
 
-        for(let i in resourceToDelete)
-            observableRemoveResources.push(this.http.delete(this.buildUri(resourceToDelete[i], resourceToDelete[i].id), {headers: headers}));
-
         let create = observableNewResources.length ? Observable.forkJoin(observableNewResources) : Observable.of([]);
         let edit = observableModifiedResources.length ? Observable.forkJoin(observableModifiedResources) : Observable.of([]);
-        let remove = observableRemoveResources.length ? Observable.forkJoin(observableRemoveResources) : Observable.of([]);
 
-        return Observable.forkJoin(create, edit, remove)
+        return Observable.forkJoin(create, edit)
             .map((res) => {
-                let response = {created: <T[]> [], edited: <T[]> [], removed: <any[]> []};
+                let response = {
+                    data: {
+                        created: <T[]> [],
+                        edited: <T[]> []
+                    },
+                    meta: {}
+                };
 
                 // Build created resources objects using response server
                 const responseCreatedResources = res[0];
                 _.forEach(responseCreatedResources, (res: Response, index: number) => {
                     newResources[index].initAttributes(res.json().data);
-                    response.created.push(newResources[index]);
+                    response.data.created.push(newResources[index]);
                 });
 
                 // Build edited resources objects using response server
                 const responseEditedResources = res[1];
                 _.forEach(responseEditedResources, (res: Response, index: number) => {
                     editResources[index].initAttributes(res.json().data);
-                    response.edited.push(editResources[index]);
+                    response.data.edited.push(editResources[index]);
                 });
-
-                // Build removed resources objects using response server
-                const responseRemovedResources = res[2];
-                _.forEach(responseRemovedResources, (res: Response, index: number) => {
-                    resourceToDelete[index].initAttributes(res.json().data);
-                    response.removed.push(resourceToDelete[index]);
-                });
-
                 return response;
+            });
+    }
+
+    removeCollection<T extends BaseResource>(resources: T[]): Observable<any> {
+        const headers = this.getHeaders();
+        let observableRemoveResources: any[] = [];
+
+        for (let i in resources)
+            observableRemoveResources.push(this.http.delete(this.buildUri(resources[i], resources[i].id), {headers: headers}));
+
+        return Observable.forkJoin(observableRemoveResources)
+            .map((res) => {
+                return {
+                    data: resources,
+                    meta: {}
+                };
             });
     }
 
