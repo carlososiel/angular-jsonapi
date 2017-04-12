@@ -560,6 +560,47 @@ export class ResourceManager {
                 return true;
         return false;
     }
+
+    /**
+     * Create several relationships
+     * @param resource
+     * @param relatedResources
+     */
+    createRelationship<T extends BaseResource>(resource: T, relatedResources: T[]): Observable<any> | any {
+        let self: any = this;
+        let relationshipsRequest: any[] = [];
+        let resourceGroupedByType: any = {};
+
+        // Grouping resources by type
+        _.forEach(relatedResources, (item: T) => {
+            let {type} = Reflect.getMetadata('Resource', item.constructor);
+            let uri = this.buildUri(resource, resource.id) + "/relationships/" + type;
+            if (!resourceGroupedByType[type]) {
+                resourceGroupedByType[type] = {
+                    uri: <string> "",
+                    data: <any[]> []
+                };
+                resourceGroupedByType[type].uri = uri;
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            } else {
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            }
+        });
+
+        // Create the observable request
+        _.forEach(resourceGroupedByType, (item: any) => {
+            relationshipsRequest.push(self.http.post(item.uri, {data: item.data}, self.getHeaders()));
+        });
+
+        return Observable.forkJoin(relationshipsRequest).map((res) => {
+            let response = (res[0] as Response).json();
+            return {
+                data: response,
+                meta: {}
+            }
+        })
+
+    }
 }
 
 /**
