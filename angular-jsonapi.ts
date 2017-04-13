@@ -98,6 +98,7 @@ export abstract class BaseResource {
 
     id: string;
     private attributeStates: any;
+    private resourcesToRemove: any[];
     createdAt: string;
     updatedAt: string;
     deletedAt: string;
@@ -121,6 +122,7 @@ export abstract class BaseResource {
     initAttributes(data: any) {
 
         this.attributeStates = {};
+        this.resourcesToRemove = [];
         this.createdAt = null;
         if (!(data.id && !data.createdAt))
             this.createdAt = new Date().getTime().toString();
@@ -195,7 +197,11 @@ export abstract class BaseResource {
 
         } else {
 
-            return Observable.forkJoin(editAndCreateActions)
+
+            return rm.removeCollection(self.resourcesToRemove)
+                .switchMap((res) => {
+                    return Observable.forkJoin(editAndCreateActions);
+                })
                 .switchMap(([res]) => {
                     const {data} = res;
                     if (data) {
@@ -203,7 +209,7 @@ export abstract class BaseResource {
                         newResources = data.created;
                         // Create relationship with new resources
                         return rm.createRelationship(self, newResources);
-                    }else
+                    } else
                         return Observable.of(null)
 
                 })
@@ -220,7 +226,7 @@ export abstract class BaseResource {
                     } else
                         return Observable.of({data: self})
 
-                });
+                })
         }
     }
 
@@ -342,6 +348,10 @@ export abstract class BaseResource {
                 }
             }
         });
+    }
+
+    markToRemove<T extends BaseResource>(resource: T[]): void {
+        this.resourcesToRemove.push(...resource);
     }
 
     /**
@@ -589,6 +599,9 @@ export class ResourceManager {
 
         for (let i in resources)
             observableRemoveResources.push(this.http.delete(this.buildUri(resources[i], resources[i].id), {headers: headers}));
+
+        if(!observableRemoveResources.length)
+            observableRemoveResources.push(Observable.of(null));
 
         return Observable.forkJoin(observableRemoveResources)
             .map((res) => {
