@@ -181,8 +181,8 @@ export abstract class BaseResource {
                     const uri = rm.buildUri(self, self.id);
                     return rm.http.post(uri, this.toJsonApi([]), {headers: rm.getHeaders()})
                         .map(res => res.json())
-                        .map((data) => {
-                            return self.initAttributes(data.data);
+                        .map((res) => {
+                            return self.initAttributes(res.data);
                         });
                 })
                 .switchMap((resource) => {
@@ -190,21 +190,22 @@ export abstract class BaseResource {
                     return rm.createRelationship(resource, newResources);
                 })
                 .switchMap((res) => {
-                    return Observable.of({data: self, meta: undefined})
+                    return Observable.of({data: self})
                 });
 
         } else {
 
             return Observable.forkJoin(editAndCreateActions)
                 .switchMap(([res]) => {
-                    if (res.length) {
-                        //Getting new resources
-                        newResources = res.data.created;
-
+                    const {data} = res;
+                    if (data) {
+                        //Setting new resources
+                        newResources = data.created;
                         // Create relationship with new resources
                         return rm.createRelationship(self, newResources);
-                    } else
-                        return Observable.of(res);
+                    }else
+                        return Observable.of(null)
+
                 })
                 .switchMap((res) => {
 
@@ -213,12 +214,12 @@ export abstract class BaseResource {
                         const uri = rm.buildUri(self, self.id);
                         return rm.http.patch(uri, self.toJsonApi([], true), {headers: rm.getHeaders()})
                             .map(res => res.json())
-                            .map((data) => {
-                                return self.initAttributes(data);
+                            .map((res) => {
+                                return self.initAttributes(res.data);
                             });
-                    } else {
-                        return Observable.of({data: self, meta: undefined})
-                    }
+                    } else
+                        return Observable.of({data: self})
+
                 });
         }
     }
@@ -562,8 +563,7 @@ export class ResourceManager {
                     data: {
                         created: <T[]> [],
                         edited: <T[]> []
-                    },
-                    meta: <any> undefined
+                    }
                 };
 
                 // Build created resources objects using response server
@@ -593,8 +593,7 @@ export class ResourceManager {
         return Observable.forkJoin(observableRemoveResources)
             .map((res) => {
                 return {
-                    data: resources,
-                    meta: undefined
+                    data: resources
                 };
             });
     }
@@ -653,8 +652,7 @@ export class ResourceManager {
         return Observable.forkJoin(relationshipsRequest).map(([res]) => {
             let response = (res instanceof Response) ? res.json : res;
             return {
-                data: response,
-                meta: undefined
+                data: response
             }
         })
 
