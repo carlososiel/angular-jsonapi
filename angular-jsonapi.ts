@@ -21,6 +21,8 @@ import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
 import 'rxjs/add/observable/throw';
 import 'rxjs/add/observable/forkJoin'
+import 'rxjs/add/operator/switchMap'
+import 'rxjs/add/operator/do'
 import * as _ from 'lodash';
 
 export function Attribute() {
@@ -148,24 +150,77 @@ export abstract class BaseResource {
     /**
      *
      * @param rm ResourceManager that handle http request
-     * @param relationShip
      * @returns {Observable<T>}
      */
-    save(rm: ResourceManager, relationShip: string[] = []): Observable<Response | any> {
-        const uri = rm.buildUri(this, this.id);
-        const headers = rm.getHeaders();
-        if (this.id)
-            return rm.http.patch(uri, this.toJsonApi(relationShip), {headers: headers})
-                .map(res => res.json())
-                .map((data) => {
-                    return this.initAttributes(data);
+    save(rm: ResourceManager): Observable<Response | any> {
+        let self: any = this;
+        let annotations = Reflect.getMetadata('Relationships', this) || {};
+        let editAndCreateActions: Observable<any>[] = [];
+        let newResources: any[] = [];
+
+        _.each(annotations, (value: any, relationship: string) => {
+            // if has this relationship
+            if (self[relationship] && rm.isDirtyCollection(self[relationship]))
+                editAndCreateActions.push(rm.saveCollection(self[relationship]))
+        });
+
+        if (!editAndCreateActions.length)
+            editAndCreateActions.push(Observable.of([]));
+
+        if (self.isNew()) {
+
+            return Observable.forkJoin(editAndCreateActions)
+                .do(([res]) => {
+                    const {data} = res;
+                    if (data) {
+                        //Setting new resources
+                        newResources = data.created;
+                    }
+                })
+                .switchMap((res) => {
+                    const uri = rm.buildUri(self, self.id);
+                    return rm.http.post(uri, this.toJsonApi([]), {headers: rm.getHeaders()})
+                        .map(res => res.json())
+                        .map((data) => {
+                            return self.initAttributes(data.data);
+                        });
+                })
+                .switchMap((resource) => {
+                    // Create relationship with new resources
+                    return rm.createRelationship(resource, newResources);
+                })
+                .switchMap((res) => {
+                    return Observable.of({data: self, meta: undefined})
                 });
-        else
-            return rm.http.post(uri, this.toJsonApi(relationShip), {headers: headers})
-                .map(res => res.json())
-                .map((data) => {
-                    return this.initAttributes(data);
+
+        } else {
+
+            return Observable.forkJoin(editAndCreateActions)
+                .switchMap(([res]) => {
+                    if (res.length) {
+                        //Getting new resources
+                        newResources = res.data.created;
+
+                        // Create relationship with new resources
+                        return rm.createRelationship(self, newResources);
+                    } else
+                        return Observable.of(res);
+                })
+                .switchMap((res) => {
+
+                    // Update resource if dirty
+                    if (self.isDirty()) {
+                        const uri = rm.buildUri(self, self.id);
+                        return rm.http.patch(uri, self.toJsonApi([], true), {headers: rm.getHeaders()})
+                            .map(res => res.json())
+                            .map((data) => {
+                                return self.initAttributes(data);
+                            });
+                    } else {
+                        return Observable.of({data: self, meta: undefined})
+                    }
                 });
+        }
     }
 
     remove(rm: ResourceManager): Observable<Response | any> {
@@ -508,7 +563,7 @@ export class ResourceManager {
                         created: <T[]> [],
                         edited: <T[]> []
                     },
-                    meta: {}
+                    meta: <any> undefined
                 };
 
                 // Build created resources objects using response server
@@ -539,7 +594,7 @@ export class ResourceManager {
             .map((res) => {
                 return {
                     data: resources,
-                    meta: {}
+                    meta: undefined
                 };
             });
     }
@@ -592,11 +647,14 @@ export class ResourceManager {
             relationshipsRequest.push(self.http.post(item.uri, {data: item.data}, self.getHeaders()));
         });
 
-        return Observable.forkJoin(relationshipsRequest).map((res) => {
-            let response = (res[0] as Response).json();
+        if (!relationshipsRequest.length)
+            relationshipsRequest.push(Observable.of([]));
+
+        return Observable.forkJoin(relationshipsRequest).map(([res]) => {
+            let response = (res instanceof Response) ? res.json : res;
             return {
                 data: response,
-                meta: {}
+                meta: undefined
             }
         })
 
