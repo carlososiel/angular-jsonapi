@@ -198,13 +198,7 @@ export abstract class BaseResource {
         } else {
 
 
-            return rm.removeCollection(self.resourcesToRemove)
-                .switchMap((res) => {
-                    return Observable.forkJoin(editAndCreateActions);
-                })
-                .do(val => {
-                    self.resourcesToRemove = [];
-                })
+            return Observable.forkJoin(editAndCreateActions)
                 .switchMap(([res]) => {
                     const {data} = res;
                     if (data) {
@@ -351,11 +345,6 @@ export abstract class BaseResource {
                 }
             }
         });
-    }
-
-    markToRemove<T extends BaseResource>(resource: T[] = []): void {
-        if (resource.length)
-            this.resourcesToRemove.push(...resource);
     }
 
     /**
