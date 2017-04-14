@@ -350,8 +350,9 @@ export abstract class BaseResource {
         });
     }
 
-    markToRemove<T extends BaseResource>(resource: T[]): void {
-        this.resourcesToRemove.push(...resource);
+    markToRemove<T extends BaseResource>(resource: T[] = []): void {
+        if (resource.length)
+            this.resourcesToRemove.push(...resource);
     }
 
     /**
