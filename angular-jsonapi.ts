@@ -202,6 +202,9 @@ export abstract class BaseResource {
                 .switchMap((res) => {
                     return Observable.forkJoin(editAndCreateActions);
                 })
+                .do(val => {
+                    self.resourcesToRemove = [];
+                })
                 .switchMap(([res]) => {
                     const {data} = res;
                     if (data) {
