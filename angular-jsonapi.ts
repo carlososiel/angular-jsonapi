@@ -24,6 +24,7 @@ import 'rxjs/add/observable/forkJoin'
 import 'rxjs/add/operator/switchMap'
 import 'rxjs/add/operator/do'
 import * as _ from 'lodash';
+import "reflect-metadata";
 
 export function Attribute() {
     return function (target: any, propertyName: string) {
