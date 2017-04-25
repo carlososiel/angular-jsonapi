@@ -2,7 +2,7 @@ import {
     Http,
     Response,
     HttpModule,
-    Headers
+    Headers, RequestOptions
 } from "@angular/http";
 import {
     Injectable,
@@ -157,73 +157,53 @@ export abstract class BaseResource {
     save(rm: ResourceManager): Observable<Response | any> {
         let self: any = this;
         let annotations = Reflect.getMetadata('Relationships', this) || {};
-        let editAndCreateActions: Observable<any>[] = [];
-        let newResources: any[] = [];
-
-        _.each(annotations, (value: any, relationship: string) => {
-            // if has this relationship
-            if (self[relationship] && rm.isDirtyCollection(self[relationship]))
-                editAndCreateActions.push(rm.saveCollection(self[relationship]))
-        });
-
-        if (!editAndCreateActions.length)
-            editAndCreateActions.push(Observable.of([]));
+        let relationshipResources: any = {};
+        let hasRelations: boolean = false;
 
         if (self.isNew()) {
 
-            return Observable.forkJoin(editAndCreateActions)
-                .do(([res]) => {
-                    const {data} = res;
-                    if (data) {
-                        //Setting new resources
-                        newResources = data.created;
+            _.each(annotations, (value: any, relationship: string) => {
+                // if has this relationship
+                if (self[relationship]) {
+                    hasRelations = true;
+                    relationshipResources[relationship] = [];
+                    relationshipResources[relationship].push(...self[relationship]);
+                }
+            });
+
+            const uri = rm.buildUri(self, self.id);
+            return rm.http.post(uri, this.toJsonApi([]), {headers: rm.getHeaders()})
+                .map(res => res.json())
+                .map((res) => {
+                    return self.initAttributes(res.data);
+                })
+                .switchMap((res) => {
+                    if (!hasRelations)
+                        return <Observable<any>>Observable.of({data: res});
+                    else {
+                        let relatedRelationships: Observable<any>[] = [];
+                        _.each(relationshipResources, (value: any) => {
+                            relatedRelationships.push(rm.createRelationship(self, value));
+                        });
+                        //Create the realationShips
+                        return Observable.forkJoin(relatedRelationships)
                     }
                 })
-                .switchMap((res) => {
-                    const uri = rm.buildUri(self, self.id);
-                    return rm.http.post(uri, this.toJsonApi([]), {headers: rm.getHeaders()})
-                        .map(res => res.json())
-                        .map((res) => {
-                            return self.initAttributes(res.data);
-                        });
-                })
-                .switchMap((resource) => {
-                    // Create relationship with new resources
-                    return rm.createRelationship(resource, newResources);
-                })
-                .switchMap((res) => {
-                    return Observable.of({data: self})
+                .switchMap(() => {
+                    return <Observable<any>>Observable.of({data: self});
                 });
-
         } else {
 
-
-            return Observable.forkJoin(editAndCreateActions)
-                .switchMap(([res]) => {
-                    const {data} = res;
-                    if (data) {
-                        //Setting new resources
-                        newResources = data.created;
-                        // Create relationship with new resources
-                        return rm.createRelationship(self, newResources);
-                    } else
-                        return Observable.of(null)
-
-                })
-                .switchMap((res) => {
-
-                    // Update resource if dirty
-                    if (self.isDirty()) {
-                        const uri = rm.buildUri(self, self.id);
-                        return rm.http.patch(uri, self.toJsonApi([], true), {headers: rm.getHeaders()})
-                            .map(res => res.json())
-                            .map((res) => {
-                                return self.initAttributes(res.data);
-                            });
-                    } else
-                        return Observable.of({data: self})
-
-                })
+            if (self.isDirty()) {
+                const uri = rm.buildUri(self, self.id);
+                return rm.http.patch(uri, self.toJsonApi([], true), {headers: rm.getHeaders()})
+                    .map(res => res.json())
+                    .map((res) => {
+                        self.initAttributes(res.data);
+                        return Observable.of({data: self});
+                    });
+            } else
+                return Observable.of({data: self});
         }
     }
 
@@ -593,7 +573,7 @@ export class ResourceManager {
         for (let i in resources)
             observableRemoveResources.push(this.http.delete(this.buildUri(resources[i], resources[i].id), {headers: headers}));
 
-        if(!observableRemoveResources.length)
+        if (!observableRemoveResources.length)
             observableRemoveResources.push(Observable.of(null));
 
         return Observable.forkJoin(observableRemoveResources)
@@ -626,7 +606,8 @@ export class ResourceManager {
      * @param resource
      * @param relatedResources
      */
-    createRelationship<T extends BaseResource>(resource: T, relatedResources: T[]): Observable<any> | any {
+    createRelationship<T extends BaseResource, B extends BaseResource>
+    (resource: T, relatedResources: B[]): Observable<any> | any {
         let self: any = this;
         let relationshipsRequest: any[] = [];
         let resourceGroupedByType: any = {};
@@ -663,6 +644,54 @@ export class ResourceManager {
         })
 
     }
+
+    /**
+     * Remove relationships with other resources
+     * @param resource
+     * @param relatedResources
+     */
+    removeRelationships<T extends BaseResource, B extends BaseResource>
+    (resource: T, relatedResources: B[]): Observable<any> | any {
+        let self: any = this;
+        let relationshipsRequest: any[] = [];
+        let resourceGroupedByType: any = {};
+
+        // Grouping resources by type
+        _.forEach(relatedResources, (item: T) => {
+            let {type} = Reflect.getMetadata('Resource', item.constructor);
+            let uri = this.buildUri(resource, resource.id) + "/relationships/" + type;
+            if (!resourceGroupedByType[type]) {
+                resourceGroupedByType[type] = {
+                    uri: <string> "",
+                    data: <any[]> []
+                };
+                resourceGroupedByType[type].uri = uri;
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            } else {
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            }
+        });
+
+        // Create the observable request
+        _.forEach(resourceGroupedByType, (item: any) => {
+            let requestOptions = new RequestOptions({
+                headers: self.getHeaders(),
+                body: {data:item.data}
+            });
+            relationshipsRequest.push(self.http.delete(item.uri, requestOptions));
+        });
+
+        if (!relationshipsRequest.length)
+            relationshipsRequest.push(Observable.of([]));
+
+        return Observable.forkJoin(relationshipsRequest).map(([res]) => {
+            let response = (res instanceof Response) ? res.json : res;
+            return {
+                data: response
+            }
+        })
+    }
+
 }
 
 /**
