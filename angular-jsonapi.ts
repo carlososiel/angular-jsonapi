@@ -2,7 +2,7 @@ import {
     Http,
     Response,
     HttpModule,
-    Headers
+    Headers, RequestOptions
 } from "@angular/http";
 import {
     Injectable,
@@ -15,38 +15,32 @@ import {
     OpaqueToken,
     ModuleWithProviders
 } from "@angular/core";
-import { Observable } from 'rxjs/Observable';
+import {Observable} from 'rxjs/Observable';
 import 'rxjs/add/operator/map';
 import 'rxjs/add/observable/of';
 import 'rxjs/add/operator/catch';
 import 'rxjs/add/observable/throw';
+import 'rxjs/add/observable/forkJoin'
+import 'rxjs/add/operator/switchMap'
+import 'rxjs/add/operator/do'
 import * as _ from 'lodash';
 
 export function Attribute() {
     return function (target: any, propertyName: string) {
 
-        let saveAnnotations = function (value: any, original: boolean, isNew: boolean = false) {
-            let annotations = Reflect.getMetadata('Attribute', target) || {};
-
-            annotations[propertyName] = {
-                isDirty: isNew ? false : (annotations[propertyName].originalValue != value),
-                newValue: value,
-                originalValue: original ? value : (annotations[propertyName].originalValue)
-            };
-            Reflect.defineMetadata('Attribute', annotations, target);
-        };
+        let annotations = Reflect.getMetadata('Attributes', target) || [];
+        annotations.push(propertyName);
+        Reflect.defineMetadata('Attributes', annotations, target);
 
         let getter = function () {
             return this['_' + propertyName];
         };
 
         let setter = function (newVal: any) {
-            saveAnnotations(newVal, false);
             this['_' + propertyName] = newVal;
         };
 
         if (delete target[propertyName]) {
-            saveAnnotations(undefined, true, true);
             Object.defineProperty(target, propertyName, {
                 get: getter,
                 set: setter,
@@ -57,15 +51,33 @@ export function Attribute() {
     };
 }
 
-export function Relationship() {
+export function Relationship(relationshipConstructor: Function) {
     return function (target: any, propertyName: string | symbol) {
-        let annotations = Reflect.getMetadata('Relationships', target) || [];
+        let annotations = Reflect.getMetadata('Relationships', target) || {};
         let targetType = Reflect.getMetadata('design:type', target, propertyName);
-        annotations.push({
+        annotations[propertyName] = {
             propertyName: propertyName,
-            relationship: targetType
-        });
-        Reflect.defineMetadata('Relationships', annotations, target);
+            relationship: targetType,
+            relationshipConstructor: relationshipConstructor
+        };
+
+        if (delete target[propertyName]) {
+
+            Reflect.defineMetadata('Relationships', annotations, target);
+
+            if (!_.get(target, propertyName)) {
+                Object.defineProperty(target, propertyName as string, {
+                    get: function () {
+                        return this['_' + propertyName.toString()];
+                    },
+                    set: function (newVal: any) {
+                        this['_' + propertyName.toString()] = newVal;
+                    },
+                    enumerable: true,
+                    configurable: true
+                });
+            }
+        }
     };
 }
 
@@ -80,104 +92,260 @@ export function Resource(config: IResourceConfig) {
     };
 }
 
-export type ResourceType<T extends BaseResource> = { new (rm: ResourceManager, data?: any, original?: boolean): T; };
+export type ResourceType<T extends BaseResource> = { new (data?: any, original?: boolean): T; };
 
 export abstract class BaseResource {
 
     id: string;
-
+    private attributeStates: any;
+    private resourcesToRemove: any[];
     createdAt: string;
-    updateAt: string;
-    deleteAt: string;
+    updatedAt: string;
+    deletedAt: string;
 
-    constructor(protected rm: ResourceManager, data?: any, original: boolean = false) {
+    constructor(data?: any) {
         if (data) {
             if (data.attributes)
-                this.initAttributes(data, original);
+                this.initAttributes(data);
             else
             // when create a new resource from app
-                this.initAttributes({attributes: data}, original);
+                this.initAttributes({attributes: data, id: data.id});
         }
     }
 
-    initAttributes(data: any, original: boolean) {
+    /**
+     * Set initial values in that method
+     * @param data
+     * @param original
+     * @returns {BaseResource}
+     */
+    initAttributes(data: any) {
+
+        this.attributeStates = {};
+        this.resourcesToRemove = [];
+        this.createdAt = null;
+        if (!(data.id && !data.createdAt))
+            this.createdAt = new Date().getTime().toString();
+        this.createdAt = data.createdAt ? data.createdAt : this.createdAt;
+        this.updatedAt = data.updatedAt ? data.updatedAt : this.updatedAt;
+        this.deletedAt = data.deletedAt ? data.deletedAt : this.deletedAt;
+
         this.id = data.id;
         let self: any = this;
-        let annotations = Reflect.getMetadata('Attribute', this);
+        let annotations = Reflect.getMetadata('Attributes', this);
         _.forEach(data.attributes, function (value: any, key: string) {
-            if (annotations.hasOwnProperty(key)) {
+            if (_.findIndex(annotations, (attr: string) => attr === key) != -1) {
                 self[key] = value;
-                
-                if (original) {
-                    _.extend(annotations[key], {
-                        isDirty: false,
-                        originalValue: value
-                    });
+
+                // Save attr state
+                self.attributeStates[key] = {
+                    originalValue: value,
+                    value: value,
+                    dirty: false
                 }
             }
+
         });
         return this;
     }
 
-    save(): Observable<Response | any> {
-        const uri = this.rm.buildUri(this, this.id);
-        const headers = this.rm.getHeaders();
-        if (this.id)
-            return this.rm.http.patch(uri, this.toJsonApi(), { headers: headers })
+    /**
+     *
+     * @param rm ResourceManager that handle http request
+     * @returns {Observable<T>}
+     */
+    save(rm: ResourceManager): Observable<Response | any> {
+        let self: any = this;
+        let annotations = Reflect.getMetadata('Relationships', this) || {};
+        let relationshipResources: any = {};
+        let hasRelations: boolean = false;
+
+        if (self.isNew()) {
+
+            _.each(annotations, (value: any, relationship: string) => {
+                // if has this relationship
+                if (self[relationship]) {
+                    hasRelations = true;
+                    relationshipResources[relationship] = [];
+                    relationshipResources[relationship].push(...self[relationship]);
+                }
+            });
+
+            const uri = rm.buildUri(self, self.id);
+            return rm.http.post(uri, this.toJsonApi([]), {headers: rm.getHeaders()})
                 .map(res => res.json())
-                .map((data) => { return this.initAttributes(data, true); });
-        else
-            return this.rm.http.post(uri, this.toJsonApi(), { headers: headers })
-                .map(res => res.json())
-                .map((data) => { return this.initAttributes(data, true); });
+                .map((res) => {
+                    return self.initAttributes(res.data);
+                })
+                .switchMap((res) => {
+                    if (!hasRelations)
+                        return <Observable<any>>Observable.of({data: res});
+                    else {
+                        let relatedRelationships: Observable<any>[] = [];
+                        _.each(relationshipResources, (value: any) => {
+                            relatedRelationships.push(rm.createRelationship(self, value));
+                        });
+                        //Create the realationShips
+                        return Observable.forkJoin(relatedRelationships)
+                    }
+                })
+                .switchMap(() => {
+                    return <Observable<any>>Observable.of({data: self});
+                });
+        } else {
+
+            if (self.isDirty()) {
+                const uri = rm.buildUri(self, self.id);
+                return rm.http.patch(uri, self.toJsonApi([], true), {headers: rm.getHeaders()})
+                    .map(res => res.json())
+                    .map((res) => {
+                        self.initAttributes(res.data);
+                        return Observable.of({data: self});
+                    });
+            } else
+                return Observable.of({data: self});
+        }
     }
 
-    remove(): Observable<Response | any> {
-        const uri = this.rm.buildUri(this, this.id);
-        const headers = this.rm.getHeaders();
-        return this.rm.http.delete(uri, { headers: headers })
+    remove(rm: ResourceManager): Observable<Response | any> {
+        const uri = rm.buildUri(this, this.id);
+        const headers = rm.getHeaders();
+        return rm.http.delete(uri, {headers: headers})
             .map(res => res.json())
-            .map((data) => {
-                return this.initAttributes(data.data, true); });
+            .map((res) => {
+                return this.initAttributes(res.data);
+            });
+    }
+
+    syncData(data: any): void {
+        let self: any = this;
+        const annotations = Reflect.getMetadata('Attributes', this);
+
+        if (this.isNew())
+            this.attributeStates = {};
+
+        for (let index in annotations) {
+            const attr = annotations[index];
+            if (this.isNew()) {
+                self[attr] = data[attr];
+                self.attributeStates[attr] = {
+                    originalValue: data[attr],
+                    value: data[attr],
+                    dirty: false
+                };
+            } else {
+                //save attribute state
+                if (!_.isEqual(self[attr], data[attr])) {
+                    self[attr] = data[attr];
+                    self.attributeStates[attr]['value'] = data[attr];
+                    self.attributeStates[attr]['dirty'] = true;
+                }
+            }
+        }
     }
 
     isDirty(): boolean {
-        let dirty = false;
-        const annotations = Reflect.getMetadata('Attribute', this);
-        for (let i in annotations) {
-            const value = annotations[i];
-            if (_.get(value, 'isDirty')) {
-                dirty = true;
-                break;
-            }
-        }
-        return dirty;
+        for (let key of Object.keys(this.attributeStates))
+            if (this.attributeStates[key].dirty)
+                return true;
+        return false;
     }
 
-    toJsonApi() {
+    isNew(): boolean {
+        return this.id ? false : true
+    }
+
+    /**
+     * Return a resource un json-api format
+     * @param relationShip resources that has a relationship with this resource
+     * @returns {{data: {type, attributes: {}}}}
+     */
+    toJsonApi(relationShips: string[] = [], onlyDirtyAttributes: boolean = false) {
         let self: any = this;
         const resourceMeta = Reflect.getMetadata('Resource', this.constructor);
-        const annotations = Reflect.getMetadata('Attribute', this);
+        const annotations = Reflect.getMetadata('Attributes', this);
         let data = {
             type: resourceMeta.type,
-            attributes: {}
+            attributes: {},
+            relationships: {}
         };
         if (this.id) {
             _.set(data, 'id', this.id);
         }
-        _.each(annotations, function (value: any, key: string) {
-            if (_.get(value, 'isDirty')) {
-                _.set(data.attributes, key, self[key]);
+        _.each(annotations, (attr: string) => {
+            if (onlyDirtyAttributes) {
+                if (self.attributeStates[attr].dirty)
+                    _.set(data.attributes, attr, self[attr])
+
+            } else {
+                _.set(data.attributes, attr, self[attr])
             }
         });
-        return { data: data };
+
+        if (relationShips.length) {
+
+            const relationshipsMetaData = Reflect.getMetadata('Relationships', this);
+            _.each(relationShips, (value: any) => {
+                let typeResource = value.type;
+
+                if (relationshipsMetaData[typeResource]) {
+                    let relation: any[] = [];
+                    _.each(value.data, (id: any) => {
+                        relation.push({type: typeResource, id: id})
+                    });
+                    _.set(data.relationships, typeResource, {data: relation});
+                }
+            });
+
+            if (!_.keys(data.relationships).length)
+                delete data.relationships;
+        } else {
+            delete data.relationships;
+        }
+        return {data: data};
     }
-}
 
-export class ValueObject {
+    syncRelationships(includedData: any[]) {
+        let self: any = this;
+        let annotations = Reflect.getMetadata('Relationships', self) || {};
 
-    equalTo<T extends ValueObject>(object: T): boolean {
-        return true;
+        // Create relationship objects
+        _.forEach(includedData, (value: any) => {
+            let typeRelationship = value.type;
+            if (typeRelationship) {
+                let relationshipObject = annotations[typeRelationship];
+
+                // if this resource has this relationship defined
+                if (relationshipObject) {
+                    let newRelationshipObject = Object.create(_.get(relationshipObject, 'relationshipConstructor.prototype'));
+                    newRelationshipObject.initAttributes(value);
+                    if (!self[typeRelationship] || !_.isArray(self[typeRelationship]))
+                        self[typeRelationship] = [];
+                    self[typeRelationship].push(newRelationshipObject);
+                }
+            }
+        });
+    }
+
+    /**
+     * Return data with json format
+     */
+    getData(showCreateAt: boolean = false): any {
+        let self: any = this;
+        let resourceData: any = {
+            id: this.id,
+            createdAt: this.createdAt
+        };
+
+        if (!showCreateAt)
+            delete resourceData.createdAt;
+
+        let attributes = Reflect.getMetadata('Attributes', this);
+
+        _.forEach(attributes, (attr: string) => {
+            resourceData[attr] = self[attr];
+        });
+        return resourceData;
     }
 }
 
@@ -186,6 +354,8 @@ export class QueryBuilder {
     private _fields: string[] = [];
     private _sorts: string[] = [];
     private _filters: string[] = [];
+    private _includes: string[] = [];
+
     private _pageSize: number;
     private _pageNumber: number;
 
@@ -207,6 +377,11 @@ export class QueryBuilder {
         return this;
     }
 
+    include(...args: string[]): QueryBuilder {
+        this._includes = args;
+        return this;
+    }
+
     limit(v: number): QueryBuilder {
         this._pageSize = v;
         return this;
@@ -218,8 +393,8 @@ export class QueryBuilder {
     }
 
     private isAttribute(v: string): boolean {
-        const attributesMetadata = Reflect.getMetadata('Attribute', new this.resource);
-        return attributesMetadata.hasOwnProperty(v);
+        const attributesMetadata = Reflect.getMetadata('Attributes', new this.resource);
+        return _.findIndex(attributesMetadata, (attr: string) => attr === v) != -1;
     }
 
     private validateAttributes() {
@@ -231,6 +406,15 @@ export class QueryBuilder {
         for (let f of fields) {
             if (!this.isAttribute(f)) {
                 console.warn(`The attribute ${f} is not part of resource`);
+            }
+        }
+    }
+
+    private validateRelationship() {
+        const relationshipMetadata = Reflect.getMetadata('Relationships', new this.resource);
+        for (let f of this._includes) {
+            if (!relationshipMetadata.hasOwnProperty(f)) {
+                console.warn(`The attribute ${f} don't have relationship with this resource, be shure that is definied in the class`);
             }
         }
     }
@@ -251,6 +435,12 @@ export class QueryBuilder {
             params.push(`fields=${this._fields.join(',')}`);
         }
 
+        this.validateRelationship();
+
+        if (this._includes.length) {
+            params.push(`include=${this._includes.join(',')}`);
+        }
+
         if (this._filters.length) {
             params.push(`filter=${this._filters.join(',')}`);
         }
@@ -262,18 +452,18 @@ export class QueryBuilder {
         return params.join('&');
     }
 
-    execute(id?: string): Observable<any> {
+    execute(rm: ResourceManager, id?: string): Observable<any> {
         // setting properly header for json-api
 
-        const headers = this.rm.getHeaders();
+        const headers = rm.getHeaders();
 
-        const uri = this.rm.buildUri(new this.resource, id);
-        return this.rm.http
-            .get(uri, { search: this.buildParameters(), headers: headers })
+        const uri = rm.buildUri(new this.resource, id);
+        return rm.http
+            .get(uri, {search: this.buildParameters(), headers: headers})
             .map(res => res.json())
             .map((data) => {
                 return {
-                    data: this.rm.extractQueryData(data, this.resource),
+                    data: rm.extractQueryData(data, this.resource),
                     meta: _.get(data, 'meta')
                 }
             });
@@ -299,20 +489,19 @@ export class ResourceManager {
         return id ? `${apiPath}\\${id}` : apiPath;
     }
 
-    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T{
+    extractQueryData<T extends BaseResource>(body: any, modelType: ResourceType<T>): T[] | T {
         let models: T[] = [];
 
-        if(_.isArray(body.data)){
+        if (_.isArray(body.data)) {
             body.data.forEach((data: any) => {
-                let model: T = new modelType(this, data, true);
-                /*if (body.included) {
-                 model.syncRelationships(data, body.included, 0);
-                 this.addToStore(model);
-                 }*/
+                let model: T = new modelType(data);
                 models.push(model);
             });
-        }else{
-            return new modelType(this, body.data, true);
+        } else {
+            let model = new modelType(body.data);
+            if (body.included && _.isArray(body.included))
+                model.syncRelationships(body.included);
+            return model;
         }
         return models;
     }
@@ -324,47 +513,185 @@ export class ResourceManager {
         return headers;
     }
 
+    /**
+     *  Perform create, update or remove resources
+     * @param resources
+     * @returns {Observable<R>}
+     */
     saveCollection<T extends BaseResource>(resources: T[]): Observable<any> {
-        let data: any[] = [];
-        let dataUri: any[] = [];
         const headers = this.getHeaders();
+        let observableNewResources: any[] = [];
+        let observableModifiedResources: any[] = [];
 
-        _.each(resources, (resource: any) => {
-            dataUri.push(resource.rm.buildUri(resource, resource.id));
-            data.push(resource.toJsonApi().data);
+        let newResources: T[] = [];
+        let editResources: T[] = [];
+
+        _.each(resources, (resource: T) => {
+            //Grouping dirty resources
+            if (resource.isDirty()) {
+                observableModifiedResources.push(this.http.patch(this.buildUri(resource, resource.id), resource.toJsonApi([], true), {headers: headers}));
+                editResources.push(resource);
+            } else if (!resource.id) { //Grouping new resources
+                observableNewResources.push(this.http.post(this.buildUri(resource), resource.toJsonApi([]), {headers: headers}));
+                newResources.push(resource);
+            }
         });
 
-        // Structure to create several resources
-        const jsonApiStructure = {
-            data: data
-        };
+        let create = observableNewResources.length ? Observable.forkJoin(observableNewResources) : Observable.of([]);
+        let edit = observableModifiedResources.length ? Observable.forkJoin(observableModifiedResources) : Observable.of([]);
 
-        return this.http.post(dataUri[0], jsonApiStructure, {headers: headers})
-            .map(res => res.json())
-            .map((data) => {
-                return this.initAttributesCollection(resources, data, true);
+        return Observable.forkJoin(create, edit)
+            .map((res) => {
+                let response = {
+                    data: {
+                        created: <T[]> [],
+                        edited: <T[]> []
+                    }
+                };
+
+                // Build created resources objects using response server
+                const responseCreatedResources = res[0];
+                _.forEach(responseCreatedResources, (res: Response, index: number) => {
+                    newResources[index].initAttributes(res.json().data);
+                    response.data.created.push(newResources[index]);
+                });
+
+                // Build edited resources objects using response server
+                const responseEditedResources = res[1];
+                _.forEach(responseEditedResources, (res: Response, index: number) => {
+                    editResources[index].initAttributes(res.json().data);
+                    response.data.edited.push(editResources[index]);
+                });
+                return response;
             });
     }
 
-    initAttributesCollection<T extends BaseResource>(resources: T[], dataResources: any, original: boolean): T[] {
+    removeCollection<T extends BaseResource>(resources: T[]): Observable<any> {
+        const headers = this.getHeaders();
+        let observableRemoveResources: any[] = [];
+
+        for (let i in resources)
+            observableRemoveResources.push(this.http.delete(this.buildUri(resources[i], resources[i].id), {headers: headers}));
+
+        if (!observableRemoveResources.length)
+            observableRemoveResources.push(Observable.of(null));
+
+        return Observable.forkJoin(observableRemoveResources)
+            .map((res) => {
+                return {
+                    data: resources
+                };
+            });
+    }
+
+    initAttributesRelationship<T extends BaseResource>(resources: T[], dataResources: any): T[] {
         let models: T[] = [];
-        for (let i = 0; i < resources.length; i++)
-            models.push(resources[i].initAttributes(dataResources.data[i], original));
+        _.forEach(resources, (resource: T, index: number) => {
+            resource.initAttributes(dataResources[index]);
+            models.push(resource);
+        });
         return models;
     }
-}
 
-@Injectable()
-export class ResourceCollection {
-    constructor(public http: Http) {
+    isDirtyCollection<T extends BaseResource>(resources: T[]): boolean {
+        for (let i in resources)
+            // if doesn't have id or is dirty
+            if (resources[i].isDirty() || !resources[i].id)
+                return true;
+        return false;
     }
 
-    save<T extends BaseResource>(resources: T[]): void {
-        // create structure for json-api
-        _.each(resources, (resource: any, key: string) => {
+    /**
+     * Create several relationships
+     * @param resource
+     * @param relatedResources
+     */
+    createRelationship<T extends BaseResource, B extends BaseResource>
+    (resource: T, relatedResources: B[]): Observable<any> | any {
+        let self: any = this;
+        let relationshipsRequest: any[] = [];
+        let resourceGroupedByType: any = {};
+
+        // Grouping resources by type
+        _.forEach(relatedResources, (item: T) => {
+            let {type} = Reflect.getMetadata('Resource', item.constructor);
+            let uri = this.buildUri(resource, resource.id) + "/relationships/" + type;
+            if (!resourceGroupedByType[type]) {
+                resourceGroupedByType[type] = {
+                    uri: <string> "",
+                    data: <any[]> []
+                };
+                resourceGroupedByType[type].uri = uri;
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            } else {
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            }
         });
-        // return Observable.of([{one:1,two:2}]);
+
+        // Create the observable request
+        _.forEach(resourceGroupedByType, (item: any) => {
+            relationshipsRequest.push(self.http.post(item.uri, {data: item.data}, self.getHeaders()));
+        });
+
+        if (!relationshipsRequest.length)
+            relationshipsRequest.push(Observable.of([]));
+
+        return Observable.forkJoin(relationshipsRequest).map(([res]) => {
+            let response = (res instanceof Response) ? res.json : res;
+            return {
+                data: response
+            }
+        })
+
     }
+
+    /**
+     * Remove relationships with other resources
+     * @param resource
+     * @param relatedResources
+     */
+    removeRelationships<T extends BaseResource, B extends BaseResource>
+    (resource: T, relatedResources: B[]): Observable<any> | any {
+        let self: any = this;
+        let relationshipsRequest: any[] = [];
+        let resourceGroupedByType: any = {};
+
+        // Grouping resources by type
+        _.forEach(relatedResources, (item: T) => {
+            let {type} = Reflect.getMetadata('Resource', item.constructor);
+            let uri = this.buildUri(resource, resource.id) + "/relationships/" + type;
+            if (!resourceGroupedByType[type]) {
+                resourceGroupedByType[type] = {
+                    uri: <string> "",
+                    data: <any[]> []
+                };
+                resourceGroupedByType[type].uri = uri;
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            } else {
+                resourceGroupedByType[type].data.push({type: type, id: item.id});
+            }
+        });
+
+        // Create the observable request
+        _.forEach(resourceGroupedByType, (item: any) => {
+            let requestOptions = new RequestOptions({
+                headers: self.getHeaders(),
+                body: {data:item.data}
+            });
+            relationshipsRequest.push(self.http.delete(item.uri, requestOptions));
+        });
+
+        if (!relationshipsRequest.length)
+            relationshipsRequest.push(Observable.of([]));
+
+        return Observable.forkJoin(relationshipsRequest).map(([res]) => {
+            let response = (res instanceof Response) ? res.json : res;
+            return {
+                data: response
+            }
+        })
+    }
+
 }
 
 /**
@@ -373,10 +700,10 @@ export class ResourceCollection {
  */
 @NgModule({
     imports: [HttpModule],
-    providers: [ResourceManager, ResourceCollection]
+    providers: [ResourceManager]
 })
 export class JsonApiModule {
-    constructor( @Optional() @SkipSelf() parentModule: JsonApiModule) {
+    constructor(@Optional() @SkipSelf() parentModule: JsonApiModule) {
         if (parentModule) {
             throw new Error(
                 'JsonApiModule is already loaded. Import it in the AppModule only');
@@ -387,8 +714,7 @@ export class JsonApiModule {
         return {
             ngModule: JsonApiModule,
             providers: [
-                { provide: ResourceManager, useValue: config },
-                { provide: ResourceCollection, useValue: config }
+                {provide: ResourceManager, useValue: config}
             ]
         };
     }

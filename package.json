@@ -1,6 +1,6 @@
 {
   "name": "angular-jsonapi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "",
   "scripts": {
     "dev": "tsc -p tsconfig.json --watch",
@@ -19,17 +19,17 @@
   "typings": "./angular-jsonapi.d.ts",
   "types": "./angular-jsonapi.d.ts",
   "devDependencies": {
-    "@angular/common": "^2.4.0",
-    "@angular/compiler": "^2.4.0",
-    "@angular/compiler-cli": "^2.4.0",
-    "@angular/core": "^2.4.0",
-    "@angular/http": "^2.4.0",
-    "@angular/platform-browser": "^2.4.0",
-    "@types/jasmine": "^2.2.33",
-    "@types/lodash": "^4.14.52",
+    "@angular/common": "^4.0.0",
+    "@angular/compiler": "^4.0.0",
+    "@angular/compiler-cli": "^4.0.0",
+    "@angular/core": "^4.0.0",
+    "@angular/http": "^4.0.0",
+    "@angular/platform-browser": "^4.0.0",
+    "@types/jasmine": "2.5.38",
+    "@types/lodash": "^4.14.63",
     "@types/reflect-metadata": "0.0.5",
     "awesome-typescript-loader": "^2.2.4",
-    "core-js": "^2.3.0",
+    "core-js": "^2.4.1",
     "es6-shim": "^0.35.0",
     "jasmine-core": "^2.4.1",
     "karma": "^1.3.0",
@@ -40,15 +40,15 @@
     "karma-webpack": "^1.7.0",
     "phantomjs-prebuilt": "^2.1.7",
     "reflect-metadata": "0.1.8",
-    "rxjs": "~5.0.0-beta.12",
+    "rxjs": "^5.1.0",
     "typescript": ">=2.0.2 <=2.0.10",
     "webpack": "^1.13.0",
-    "zone.js": "~0.7.2"
+    "zone.js": "^0.8.4"
   },
   "peerDependencies": {
-    "@angular/core": "^2.0.0",
-    "@angular/http": "^2.0.0",
-    "rxjs": "^5.0.0"
+    "@angular/core": "^4.0.0",
+    "@angular/http": "^4.0.0",
+    "rxjs": "^5.1.0"
   },
   "dependencies": {
     "lodash": "^4.17.4"
